@@ -1,0 +1,61 @@
+{
+  "environment": "development",
+  "log_level": "INFO",
+  "debug_mode": false,
+  "models": {
+    "chat": {
+      "glm-4": {
+        "provider": "langchain_openai.ChatOpenAI",
+        "model": "glm-4.5",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "api_key": "${ZHIPU_API_KEY:-}",
+        "temperature": 0.8,
+        "top_p": 0.9,
+        "max_tokens": 1024
+      },
+      "deepseek": {
+        "provider": "langchain_openai.ChatOpenAI",
+        "model": "deepseek-chat",
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key": "${DEEPSEEK_API_KEY:-}",
+        "temperature": 0.7
+      }
+    },
+    "embedding": {
+      "bge-m3": {
+        "provider": "langchain_ollama.OllamaEmbeddings",
+        "model": "bge-m3:latest",
+        "base_url": "http://ollama:11434"
+      }
+    }
+  },
+  "vector_store": {
+    "persist_directory": "./data/chroma_db",
+    "collection_name": "rag_documents",
+    "similarity_threshold": 0.78,
+    "max_retrieved_docs": 4,
+    "enable_caching": true,
+    "cache_ttl": 3600
+  },
+  "document_processing": {
+    "data_dir": "./data/documents",
+    "chunk_size": 1000,
+    "chunk_overlap": 200,
+    "enable_smart_index": true,
+    "hash_index_file": "./data/.hash_index.json"
+  },
+  "retrieval": {
+    "default_k": 5,
+    "compression_threshold": 0.7,
+    "multi_query_enabled": true,
+    "cache_enabled": true,
+    "cache_ttl": 3600
+  },
+  "mcp_servers": {
+    "ucagent": {
+      "transport": "streamable_http",
+      "url": "http://localhost:5000/mcp",
+      "timeout": 30
+    }
+  }
+}

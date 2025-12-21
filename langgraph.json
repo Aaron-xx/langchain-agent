@@ -1,0 +1,13 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./src/cli/cli.py:get_rag_graph"
+  },
+  "env": ".env",
+  "config": {
+    "config_file": "config.json"
+  },
+  "cors": {
+    "allow_origins": ["http://localhost:3000"]
+  }
+}
