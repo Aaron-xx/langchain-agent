@@ -2,7 +2,7 @@ from src.agents import create_pre_agents
 from src.common import RuntimeContext
 from typing import Any, AsyncGenerator, Optional
 
-class UcagentApp:
+class RAGApp:
     """RAG Chain application with agent management."""
 
     def __init__(self, context: RuntimeContext) -> None:
@@ -10,22 +10,22 @@ class UcagentApp:
         self.context = context
         self.agents = None
         self.factory = None
-        self.ucagent = None
+        self.ragagent = None
 
     async def get_agent(self) -> None:
         """Initialize agents and factory on first use."""
         self.agents, self.factory = await create_pre_agents(self.context)
-        self.ucagent = self.agents["uc_agent"]
+        self.ragagent = self.agents["rag_agent"]
 
     async def astream(self, query: str, runtime: Optional[RuntimeContext] = None) -> AsyncGenerator[str, Any]:
         """Stream RAG query execution through agents."""
 
-        if self.ucagent is None:
+        if self.ragagent is None:
             await self.get_agent()
 
         context = runtime or self.context
 
-        async for chunk in self.ucagent.astream(
+        async for chunk in self.ragagent.astream(
             query,
             stream_mode="messages"
         ):

@@ -1,15 +1,15 @@
 import asyncio
 from typing import Dict, Tuple, Any
-from config import get_config
-from tools import get_all_retrievers, get_mcp_tools
+from src.common import RuntimeContext
+from src.tools import get_all_retrievers, get_mcp_tools
 from .factory import AgentFactory
 from .config import PRESETS
 from langgraph.store.memory import InMemoryStore
 
-async def create_pre_agents() -> Tuple[Dict[str, Any], AgentFactory]:
+async def create_pre_agents(context: RuntimeContext) -> Tuple[Dict[str, Any], AgentFactory]:
     """Create all preset agents with their factory."""
-    config = get_config()
-    llm = config.chat_model
+    config = context.config
+    llm = config.chat()
 
     retrieval_tools = get_all_retrievers()
     try:

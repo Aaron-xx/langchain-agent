@@ -6,9 +6,9 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 
-from config import get_config
-from tools.documents import DocumentManager
-from common import RuntimeContext
+from src.config import get_config
+from src.tools.documents import DocumentManager
+from src.common import RuntimeContext
 
 config = get_config()
 doc_manager = DocumentManager(config)
@@ -30,7 +30,7 @@ async def spinner(task):
 
 class CLIDynamicCompleter(Completer):
     def get_completions(self, document, complete_event):
-        cmds = ["/ucagent", "/rag", "/exit", "/help"]
+        cmds = ["/ucagent", "/rag", "/raggraph", "/exit", "/help"]
         models = ["gpt-4", "gpt-3.5"]
         sessions = ["default", "session1"]
         for w in cmds + models + sessions:
@@ -44,6 +44,15 @@ session = PromptSession(history=FileHistory(history_file), completer=completer)
 def create_ucagent_app():
     from src.apps.ucagent_app import UcagentApp
     return UcagentApp(context)
+
+def create_rag_app():
+    from src.apps.rag_app import RAGApp
+    return RAGApp(context)
+
+def create_rag_graph():
+    app = create_rag_app()
+    graph = app.get_agent()
+    return graph
 
 def create_rag_graph_app():
     from src.graphs.rag_graph import RAGGraph
@@ -77,6 +86,9 @@ async def run_query(line):
         if mode == "ucagent":
             app = create_ucagent_app()
             await _stream_output(app, payload)
+        elif mode == "rag":
+            app = create_rag_app()
+            await _stream_output(app, payload)
         else:
             app, runtime = create_rag_graph_app()
             await _stream_output(app, payload, runtime=runtime)
@@ -88,7 +100,7 @@ async def run_query(line):
 
 async def cli_main():
     global mode, task
-    print("CLI ready  /ucagent  /rag  /help  Ctrl+C cancel\n")
+    print("CLI ready  /ucagent  /rag /raggraph  /help  Ctrl+C cancel\n")
     while True:
         try:
             with patch_stdout():
@@ -98,13 +110,13 @@ async def cli_main():
                 continue
             if line.startswith("/"):
                 cmd = line[1:].lower()
-                if cmd in ("ucagent","rag"):
+                if cmd in ("ucagent","rag", "/raggraph "):
                     mode = cmd
                     print_formatted_text(ANSI(f"\x1b[33m✓ {mode.upper()} mode\x1b[0m\n"))
                 elif cmd in ("exit","quit"):
                     return
                 elif cmd == "help":
-                    print_formatted_text(ANSI("\x1b[36mCommands: /ucagent /rag /exit /help\x1b[0m"))
+                    print_formatted_text(ANSI("\x1b[36mCommands: /ucagent /rag /raggraph /exit /help\x1b[0m"))
                 continue
             task = asyncio.create_task(run_query(line))
             spinner_task = asyncio.create_task(spinner(task))

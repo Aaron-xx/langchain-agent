@@ -1,10 +1,10 @@
 """Simplified RAG nodes"""
 from typing import Dict, Any
 from langgraph.runtime import Runtime
-from common import RuntimeContext
-from ..states import RAGState
+from src.common import RuntimeContext
+from src.graphs.states import RAGState
 from pathlib import Path
-from config import get_config
+from src.config import get_config
 from langchain_core.messages import AIMessage
 import logging
 import asyncio
@@ -49,7 +49,7 @@ async def retrieve_node(state: RAGState, runtime: Runtime[RuntimeContext]) -> RA
 async def generate_node(state: RAGState, config, runtime: Runtime[RuntimeContext]) -> Dict[str, Any]:
     """Generate response using LLM with recent conversation context."""
     try:
-        llm = runtime.context.config.chat_model
+        llm = runtime.context.config.chat()
 
         messages = state["messages"]
 

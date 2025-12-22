@@ -2,7 +2,7 @@ from typing import List
 from langchain.tools import tool, ToolRuntime
 from langchain_classic.retrievers import EnsembleRetriever
 
-from common import RuntimeContext
+from src.common import RuntimeContext
 
 @tool
 async def similarity_search(query: str, runtime: ToolRuntime[RuntimeContext], k: int = 4) -> str:
