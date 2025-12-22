@@ -32,10 +32,10 @@ class DocumentManager:
         self.chunk_size = config.get('document_processing.chunk_size', 1000)
         self.chunk_overlap = config.get('document_processing.chunk_overlap', 200)
 
-        embedding_model = config.embedding_model
+        embedding = config.embedding
         self._vector_store = Chroma(
             persist_directory=self.persist_dir,
-            embedding_function=embedding_model,
+            embedding_function=embedding,
             collection_name=self.collection_name
         )
 
@@ -206,13 +206,13 @@ class DocumentManager:
 
         self._vector_store.add_documents(split_docs)
 
-        logger.info(f"✅ Reindex complete: {len(split_docs)} document chunks")
+        logger.info(f"Reindex complete: {len(split_docs)} document chunks")
 
     def add_documents(self, documents: List[Document] = None):
         """Add documents with incremental update."""
         if documents is None:
             if not self._smart_index():
-                logger.info("✅ Documents unchanged, skipping update")
+                logger.info("Documents unchanged, skipping update")
                 return
             documents = self._load_all_documents()
 
@@ -222,7 +222,7 @@ class DocumentManager:
 
             self._vector_store.add_documents(split_docs)
 
-            logger.info(f"✅ Document update complete: {len(split_docs)} document chunks")
+            logger.info(f"Document update complete: {len(split_docs)} document chunks")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get collection statistics."""

@@ -17,7 +17,6 @@ class AgentContext(TypedDict, total=False):
     quality_requirements: str
     retrieval_results: Any
 
-# 辅助函数：安全获取上下文值
 def _safe_get_context(context: dict, key: str, default: Any = None) -> Any:
     """安全获取上下文值"""
     if not context:
@@ -138,15 +137,23 @@ def execution_prompt_with_context(request: ModelRequest) -> str:
 @dynamic_prompt
 def rag_prompt_with_context(request: ModelRequest) -> str:
     """RAG agent prompt"""
-    base_prompt = """你是一个RAG专家。基于检索文档回答问题。
+    
+    context = request.runtime.context or {}
+    
+    base_prompt = """你是一个RAG专家。基于检索文档与历史回答问题。
 
     工作原则：严格依据文档、区分事实推断、提供引用
 
     重点关注：
     - 检索焦点和文档类型
-    - 时间范围限制"""
-
-    context = request.runtime.context or {}
+    - 时间范围限制
+    
+    Notes:
+    1. If user asks to remember information, confirm in your response
+    2. If asked about previous information, search conversation history
+    3. Provide complete answer combining documents and history  
+    
+    """
 
     # 安全获取检索上下文
     retrieval_ctx = _safe_get_context(context, "retrieval_context")
@@ -171,9 +178,10 @@ def ucagent_prompt_with_context(request: ModelRequest) -> str:
     专业领域：RTL设计、测试开发、调试分析、形式化验证
 
     核心工作：
-    1. 代码分析：信号完整性、时序、状态机
-    2. 问题识别：常见陷阱、边界条件
-    3. 测试策略：边界测试、覆盖率"""
+        1. 代码分析：信号完整性、时序、状态机
+        2. 问题识别：常见陷阱、边界条件
+        3. 测试策略：边界测试、覆盖率  
+    """
 
     context = request.runtime.context or {}
 

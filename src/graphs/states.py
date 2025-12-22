@@ -14,9 +14,3 @@ class RAGState(TypedDict):
     answer: str                                            # Final answer
     sources: Annotated[list["DocumentChunk"], operator.add]  # Track source documents
     error: Optional[str]                                   # Error handling and logging
-    
-@dataclass
-class GraphContext:
-    """Graph-wide context for dependencies"""
-    llm: Any  # LLM instance
-    doc_manager: Any  # DocumentManager instance

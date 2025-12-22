@@ -8,11 +8,6 @@ if TYPE_CHECKING:
     from src.config.config import Config
     from src.tools.documents import DocumentManager
 
-class RAGMode(Enum):
-    """RAG implementation modes."""
-    CHAIN = "chain"
-    GRAPH = "graph"
-
 class DocumentChunk(TypedDict):
     """Document chunk with metadata."""
     content: str

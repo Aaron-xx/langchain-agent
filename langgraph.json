@@ -1,7 +1,7 @@
 {
   "dependencies": ["."],
   "graphs": {
-    "agent": "./src/cli/cli.py:get_rag_graph"
+    "agent": "./src/cli/cli.py:create_rag_graph"
   },
   "env": ".env",
   "config": {

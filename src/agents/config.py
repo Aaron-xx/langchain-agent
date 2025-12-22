@@ -52,16 +52,16 @@ PRESETS = {
         tools=["retrieval", "mcp"],
         middleware=["tool_retry", "model_call_limit"],
     ),
-    "rag": AgentConfig(
+    "rag_agent": AgentConfig(
         name="rag_agent",
         prompt_fn=rag_prompt_with_context,
         tools=["retrieval"],
-        middleware=["tool_retry"],
+        middleware=["tool_retry", "pii_masking", "filesystem", "human_in_loop"],
     ),
     "uc_agent": AgentConfig(
         name="uc_agent",
         prompt_fn=ucagent_prompt_with_context,
         tools=["retrieval", "mcp"],
-        middleware=["tool_retry", "pii_masking", "filesystem"],
+        middleware=["tool_retry", "pii_masking", "filesystem", "human_in_loop"],
     ),
 }
