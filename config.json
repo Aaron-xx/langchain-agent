@@ -1,31 +1,33 @@
 {
-  "environment": "development",
-  "log_level": "INFO",
-  "debug_mode": false,
+  "environment_type": "internal",
   "models": {
     "chat": {
-      "glm-4": {
-        "provider": "langchain_openai.ChatOpenAI",
-        "model": "glm-4.5",
+      "openai": {
+        "provider": "openai",
         "base_url": "https://open.bigmodel.cn/api/paas/v4",
-        "api_key": "${ZHIPU_API_KEY:-}",
-        "temperature": 0.8,
-        "top_p": 0.9,
-        "max_tokens": 1024
+        "model": "glm-4.5",
+        "temperature": 0.7,
+        "max_tokens": 2048,
+        "api_key": "${ZHIPUAI_API_KEY:-}"
       },
-      "deepseek": {
-        "provider": "langchain_openai.ChatOpenAI",
-        "model": "deepseek-chat",
-        "base_url": "https://api.deepseek.com/v1",
-        "api_key": "${DEEPSEEK_API_KEY:-}",
+      "ollama": {
+        "provider": "ollama",
+        "base_url": "http://ollama:11434",
+        "model": "qwen3:8b",
         "temperature": 0.7
       }
     },
     "embedding": {
-      "bge-m3": {
-        "provider": "langchain_ollama.OllamaEmbeddings",
-        "model": "bge-m3:latest",
-        "base_url": "http://ollama:11434"
+      "openai": {
+        "provider": "openai",
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "text-embedding-3-small",
+        "api_key": "${ZHIPUAI_API_KEY:-}"
+      },
+      "ollama": {
+        "provider": "ollama",
+        "base_url": "http://ollama:11434",
+        "model": "bge-m3:latest"
       }
     }
   },
@@ -54,7 +56,7 @@
   "mcp_servers": {
     "ucagent": {
       "transport": "streamable_http",
-      "url": "http://localhost:5000/mcp",
+      "url": "http://ollama:5000/mcp",
       "timeout": 30
     }
   }
