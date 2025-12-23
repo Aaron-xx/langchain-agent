@@ -1,433 +1,446 @@
-"""超简洁配置系统 - 全部代码在这一个文件"""
+"""Configuration system for multi-provider LLM models.
 
+This module provides a unified configuration system that supports:
+- Multiple LLM providers (OpenAI, Ollama, Anthropic, HuggingFace)
+- Environment variable substitution with defaults
+- Flexible configuration access (attribute, dict, fuzzy matching)
+- Dynamic model loading with caching
+"""
+
+import importlib
 import json
+import logging
 import os
 import re
-import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from dotenv import load_dotenv
 
-load_dotenv() 
+load_dotenv()
 
-# 配置日志
+# Configure logging
+def get_log_level() -> int:
+    """Get log level from environment variable.
+
+    Returns:
+        Logging level constant (default: WARNING)
+    """
+    level = os.getenv("LOG_LEVEL", "WARNING").upper()
+    return getattr(logging, level, logging.WARNING)
+
+
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=get_log_level(),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
 
 class Config:
-    """超简洁配置系统 - 核心类"""
-    
-    # 4 个 Provider 预设
-    PROVIDERS = {
-        'openai': {
-            'chat': 'langchain_openai.ChatOpenAI',
-            'embedding': 'langchain_openai.OpenAIEmbeddings',
+    """Unified configuration system for LLM applications.
+
+    Supports multiple access patterns:
+    - Attribute: config.persist_directory
+    - Dict: config['vector_store.persist_directory']
+    - Fuzzy: config.persistdirectory (underscores removed)
+    """
+
+    # Supported LLM providers
+    PROVIDERS: dict[str, dict[str, str]] = {
+        "openai": {
+            "chat": "langchain_openai.ChatOpenAI",
+            "embedding": "langchain_openai.OpenAIEmbeddings",
         },
-        'ollama': {
-            'chat': 'langchain_ollama.ChatOllama',
-            'embedding': 'langchain_ollama.OllamaEmbeddings',
+        "ollama": {
+            "chat": "langchain_ollama.ChatOllama",
+            "embedding": "langchain_ollama.OllamaEmbeddings",
         },
-        'anthropic': {
-            'chat': 'langchain_anthropic.ChatAnthropic',
-            'embedding': 'langchain_community.embeddings.HuggingFaceEmbeddings',
+        "anthropic": {
+            "chat": "langchain_anthropic.ChatAnthropic",
+            "embedding": "langchain_community.embeddings.HuggingFaceEmbeddings",
         },
-        'huggingface': {
-            'chat': 'langchain_huggingface.ChatHuggingFace',
-            'embedding': 'langchain_huggingface.HuggingFaceEmbeddings',
+        "huggingface": {
+            "chat": "langchain_huggingface.ChatHuggingFace",
+            "embedding": "langchain_huggingface.HuggingFaceEmbeddings",
         },
     }
-    
-    def __init__(self, config_path: str = 'config.json'):
-        """
-        初始化配置系统
-        
+
+    def __init__(self, config_path: str = "config.json") -> None:
+        """Initialize configuration system.
+
         Args:
-            config_path: 配置文件路径
+            config_path: Path to JSON configuration file
+
+        Raises:
+            FileNotFoundError: If config file does not exist
         """
-        logger.info(f"开始加载配置: {config_path}")
-        
-        # 1. 加载 JSON 配置
+        logger.info(f"Loading configuration: {config_path}")
+
+        # Load JSON config
         if not Path(config_path).exists():
-            raise FileNotFoundError(f"配置文件不存在: {config_path}")
-        
-        with open(config_path, 'r', encoding='utf-8') as f:
-            self._raw = json.load(f)
-        
-        logger.info("✅ JSON 配置加载完成")
-        
-        # 2. 替换环境变量
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+
+        with open(config_path, "r", encoding="utf-8") as f:
+            self._raw: dict[str, Any] = json.load(f)
+
+        logger.info("JSON configuration loaded")
+
+        # Replace environment variables
         self._raw = self._replace_env(self._raw)
-        logger.info("✅ 环境变量替换完成")
-        
-        # 3. 构建索引（扁平化所有键）
-        self._index: Dict[str, Any] = {}
-        self._flatten(self._raw, '')
-        logger.info(f"✅ 索引构建完成，共 {len(self._index)} 个键")
-        
-        # 4. 模型缓存
-        self._model_cache: Dict[str, Any] = {}
-    
+        logger.info("Environment variables replaced")
+
+        # Build flattened index
+        self._index: dict[str, Any] = {}
+        self._flatten(self._raw, "")
+        logger.info(f"Index built with {len(self._index)} keys")
+
+        # Model cache
+        self._model_cache: dict[str, Any] = {}
+
     def _flatten(self, obj: Any, prefix: str) -> None:
-        """
-        递归扁平化配置，构建多层级索引
-        
-        支持三种访问方式：
-        1. 简写: di.persist_directory
-        2. 路径: di['vector_store.persist_directory']
-        3. 模糊: di.persistdirectory
-        
+        """Recursively flatten configuration for multiple access patterns.
+
+        Supports three access methods:
+        1. Shorthand: config.persist_directory
+        2. Path: config['vector_store.persist_directory']
+        3. Fuzzy: config.persistdirectory (underscores removed)
+
         Args:
-            obj: 配置对象
-            prefix: 当前路径前缀
+            obj: Configuration object (dict, list, or primitive)
+            prefix: Current path prefix
         """
         if isinstance(obj, dict):
             for key, value in obj.items():
                 full_path = f"{prefix}.{key}" if prefix else key
-                
+
                 if isinstance(value, dict):
-                    # 继续递归
+                    # Continue recursion
                     self._flatten(value, full_path)
                 else:
-                    # 添加到索引
-                    # 索引策略：支持多种访问方式
-                    self._index[key] = value                         # 最后一级键 (简写)
-                    self._index[full_path] = value                   # 完整路径
-                    self._index[key.replace('_', '').lower()] = value  # 去下划线（模糊）
-    
+                    # Add to index with multiple access patterns
+                    self._index[key] = value
+                    self._index[full_path] = value
+                    self._index[key.replace("_", "").lower()] = value  # Fuzzy match
+
     def _replace_env(self, obj: Any) -> Any:
-        """
-        递归替换环境变量
-        
-        支持两种格式：
-        - ${VAR}: 获取环境变量，不存在则为空
-        - ${VAR:-default}: 获取环境变量，不存在则使用默认值
-        
+        """Recursively replace environment variables in configuration.
+
+        Supports two formats:
+        - ${VAR}: Get env var, empty if not found
+        - ${VAR:-default}: Get env var, use default if not found
+
         Args:
-            obj: 待处理对象
-        
+            obj: Object to process
+
         Returns:
-            替换后的对象
+            Object with environment variables replaced
         """
         if isinstance(obj, str):
-            def replacer(match):
+            def replacer(match: re.Match[str]) -> str:
                 expr = match.group(1)
-                if ':-' in expr:
-                    var, default = expr.split(':-', 1)
+                if ":-" in expr:
+                    var, default = expr.split(":-", 1)
                     return os.getenv(var.strip(), default.strip())
-                else:
-                    return os.getenv(expr.strip(), '')
-            
-            return re.sub(r'\$\{([^}]+)\}', replacer, obj)
-        
-        elif isinstance(obj, dict):
+                return os.getenv(expr.strip(), "")
+
+            return re.sub(r"\$\{([^}]+)\}", replacer, obj)
+
+        if isinstance(obj, dict):
             return {k: self._replace_env(v) for k, v in obj.items()}
-        
-        elif isinstance(obj, list):
+
+        if isinstance(obj, list):
             return [self._replace_env(v) for v in obj]
-        
+
         return obj
-    
-    # ========== 访问接口 ==========
-    
+
+    # ========== Access Methods ==========
+
     def __getattr__(self, key: str) -> Any:
-        """
-        属性访问方式：di.persist_directory
-        
+        """Attribute access: config.persist_directory.
+
         Args:
-            key: 配置键
-        
+            key: Configuration key
+
         Returns:
-            配置值
+            Configuration value
+
+        Raises:
+            AttributeError: If key not found
         """
-        # 避免干扰私有属性
-        if key.startswith('_'):
+        # Avoid interfering with private attributes
+        if key.startswith("_"):
             return super().__getattribute__(key)
-        
+
         if key in self._index:
-            logger.debug(f"属性访问: {key}")
+            logger.debug(f"Attribute access: {key}")
             return self._index[key]
-        
-        raise AttributeError(f"配置不存在: {key}")
-    
+
+        raise AttributeError(f"Configuration not found: {key}")
+
     def __getitem__(self, key: str) -> Any:
-        """
-        字典访问方式：di['vector_store.persist_directory']
-        
+        """Dictionary access: config['vector_store.persist_directory'].
+
         Args:
-            key: 配置键
-        
+            key: Configuration key
+
         Returns:
-            配置值
+            Configuration value
+
+        Raises:
+            KeyError: If key not found
         """
         if key in self._index:
-            logger.debug(f"字典访问: {key}")
+            logger.debug(f"Dictionary access: {key}")
             return self._index[key]
-        
-        raise KeyError(f"配置不存在: {key}")
-    
+
+        raise KeyError(f"Configuration not found: {key}")
+
     def get(self, key: str, default: Any = None) -> Any:
-        """
-        函数访问方式：di.get('key', default='value')
-        
+        """Function access with default: config.get('key', default='value').
+
         Args:
-            key: 配置键
-            default: 默认值
-        
+            key: Configuration key
+            default: Default value if key not found
+
         Returns:
-            配置值或默认值
+            Configuration value or default
         """
         result = self._index.get(key, default)
-        logger.debug(f"函数访问: {key} → {result}")
+        logger.debug(f"Function access: {key} → {result}")
         return result
-    
-    def get_group(self, prefix: str) -> Dict[str, Any]:
-        """
-        获取配置组：di.get_group('vector_store')
-        
-        返回所有以 prefix 开头的配置
-        
+
+    def get_group(self, prefix: str) -> dict[str, Any]:
+        """Get configuration group: config.get_group('vector_store').
+
+        Returns all keys starting with prefix, with prefix removed.
+
         Args:
-            prefix: 配置前缀
-        
+            prefix: Configuration prefix
+
         Returns:
-            配置字典
+            Dictionary of matching configurations
         """
-        prefix_with_dot = prefix + '.'
+        prefix_with_dot = f"{prefix}."
         result = {
-            k: v for k, v in self._index.items() 
+            k: v for k, v in self._index.items()
             if k.startswith(prefix_with_dot)
         }
-        
-        # 移除前缀，只保留相对路径
+
+        # Remove prefix, keep only relative path
         result = {
-            k[len(prefix_with_dot):]: v 
+            k[len(prefix_with_dot):]: v
             for k, v in result.items()
         }
-        
-        logger.debug(f"获取配置组: {prefix} → {len(result)} 项")
+
+        logger.debug(f"Get config group: {prefix} → {len(result)} items")
         return result
-    
-    def list_keys(self, pattern: str = None) -> List[str]:
-        """
-        列出所有配置键
-        
+
+    def list_keys(self, pattern: str | None = None) -> list[str]:
+        """List all configuration keys.
+
         Args:
-            pattern: 可选的过滤模式
-        
+            pattern: Optional filter pattern
+
         Returns:
-            键列表
+            Sorted list of keys
         """
         keys = sorted(self._index.keys())
-        
+
         if pattern:
             keys = [k for k in keys if pattern.lower() in k.lower()]
-        
-        logger.debug(f"列出 {len(keys)} 个键")
+
+        logger.debug(f"List {len(keys)} keys")
         return keys
-    
-    def search(self, pattern: str) -> Dict[str, Any]:
-        """
-        搜索配置
-        
+
+    def search(self, pattern: str) -> dict[str, Any]:
+        """Search configuration by pattern.
+
         Args:
-            pattern: 搜索模式
-        
+            pattern: Search pattern (case-insensitive)
+
         Returns:
-            匹配的配置字典
+            Dictionary of matching configurations
         """
         pattern = pattern.lower()
         result = {
             k: v for k, v in self._index.items()
             if pattern in k.lower()
         }
-        
-        logger.info(f"搜索 '{pattern}' 找到 {len(result)} 个结果")
+
+        logger.info(f"Search '{pattern}' found {len(result)} results")
         return result
-    
-    # ========== 模型加载 ==========
-    def _get_default_provider(self, model_type: str = 'chat') -> str:
-        """根据 environment_type 获取默认 provider"""
-        # 直接从原始数据读，不用索引
-        env_type = self._raw.get('environment_type', 'external')
-        
-        if env_type == 'internal':
-            return 'ollama'
-        else:
-            return 'openai'
-    
-    def chat(self, provider: str = 'openai') -> Any:
-        """
-        获取聊天模型：di.chat('openai')
-        
+
+    # ========== Model Loading ==========
+
+    def _get_default_provider(self, model_type: str = "chat") -> str:
+        """Get default provider based on environment_type.
+
         Args:
-            provider: provider 名称 (openai|ollama|anthropic|huggingface)
-        
+            model_type: Model type ('chat' or 'embedding')
+
         Returns:
-            聊天模型实例
+            Provider name
         """
-        # if provider is None:
-        provider = self._get_default_provider('chat')
-        
-        return self._get_model(provider, 'chat')
-    
-    def embedding(self, provider: str = 'openai') -> Any:
-        """
-        获取 embedding 模型：di.embedding('ollama')
-        
+        env_type = self._raw.get("environment_type", "external")
+        return "ollama" if env_type == "internal" else "openai"
+
+    def chat(self, provider: str = "openai") -> Any:
+        """Get chat model instance.
+
         Args:
-            provider: provider 名称
-        
+            provider: Provider name (openai|ollama|anthropic|huggingface)
+
         Returns:
-            embedding 模型实例
+            Chat model instance
         """
-        # if provider is None:
-        provider = self._get_default_provider('embedding')
-        return self._get_model(provider, 'embedding')
-    
+        provider = self._get_default_provider("chat")
+        return self._get_model(provider, "chat")
+
+    def embedding(self, provider: str = "openai") -> Any:
+        """Get embedding model instance.
+
+        Args:
+            provider: Provider name
+
+        Returns:
+            Embedding model instance
+        """
+        return self._get_model("ollama", "embedding")
+
     def _get_model(self, provider: str, model_type: str) -> Any:
-        """
-        内部方法：创建和缓存模型实例
-        
+        """Internal method: Create and cache model instance.
+
         Args:
-            provider: provider 名称
-            model_type: 模型类型 ('chat' 或 'embedding')
-        
+            provider: Provider name
+            model_type: Model type ('chat' or 'embedding')
+
         Returns:
-            模型实例
+            Model instance
+
+        Raises:
+            ValueError: If provider or model_type is not supported
+            ImportError: If provider module cannot be imported
         """
-        # 检查缓存
+        # Check cache
         cache_key = f"{provider}_{model_type}"
         if cache_key in self._model_cache:
-            logger.info(f"模型缓存命中: {cache_key}")
+            logger.info(f"Model cache hit: {cache_key}")
             return self._model_cache[cache_key]
-        
-        # 检查 provider 是否存在
+
+        # Validate provider
         if provider not in self.PROVIDERS:
-            available = ', '.join(self.PROVIDERS.keys())
-            raise ValueError(f"未知 provider: '{provider}'。支持: {available}")
-        
+            available = ", ".join(self.PROVIDERS.keys())
+            raise ValueError(f"Unknown provider: '{provider}'. Supported: {available}")
+
         if model_type not in self.PROVIDERS[provider]:
-            available = ', '.join(self.PROVIDERS[provider].keys())
-            raise ValueError(f"Provider '{provider}' 不支持 '{model_type}'。支持: {available}")
-        
+            available = ", ".join(self.PROVIDERS[provider].keys())
+            raise ValueError(
+                f"Provider '{provider}' does not support '{model_type}'. Supported: {available}"
+            )
+
         try:
-            logger.info(f"开始加载 {provider} {model_type} 模型...")
-            
-            # 获取类路径
+            logger.info(f"Loading {provider} {model_type} model...")
+
+            # Get class path
             class_path = self.PROVIDERS[provider][model_type]
-            module_path, class_name = class_path.rsplit('.', 1)
-            
-            # 动态导入
-            import importlib
+            module_path, class_name = class_path.rsplit(".", 1)
+
+            # Dynamic import
             try:
                 module = importlib.import_module(module_path)
             except ImportError as e:
                 raise ImportError(
-                    f"无法导入 {module_path}。"
-                    f"请先安装: pip install langchain-{provider}"
+                    f"Cannot import {module_path}. "
+                    f"Install: pip install langchain-{provider}"
                 ) from e
-            
+
             cls = getattr(module, class_name)
-            
-            # 获取配置参数
+
+            # Get configuration parameters
             config_key = f"models.{model_type}.{provider}"
             params = self.get_group(config_key)
-            
-            # 清理参数（移除不必要的字段）
-            params = {k: v for k, v in params.items() if k != 'provider'}
-            
-            logger.info(f"模型参数: {params}")
-            
-            # 创建实例
+
+            # Clean parameters (remove unnecessary fields)
+            params = {k: v for k, v in params.items() if k != "provider"}
+
+            logger.info(f"Model parameters: {params}")
+
+            # Create instance
             instance = cls(**params)
-            
-            # 缓存
+
+            # Cache
             self._model_cache[cache_key] = instance
-            
-            logger.info(f"✅ {provider} {model_type} 模型加载成功")
+
+            logger.info(f"{provider} {model_type} model loaded successfully")
             return instance
-        
+
         except Exception as e:
-            logger.error(f"❌ 模型加载失败: {e}")
+            logger.error(f"Model loading failed: {e}")
             raise
-    
-    # ========== 工具方法 ==========
-    
-    def get_raw(self) -> Dict[str, Any]:
-        """获取原始配置字典"""
+
+    # ========== Utility Methods ==========
+
+    def get_raw(self) -> dict[str, Any]:
+        """Get raw configuration dictionary.
+
+        Returns:
+            Copy of raw configuration
+        """
         return self._raw.copy()
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """获取系统统计信息"""
+
+    def get_stats(self) -> dict[str, Any]:
+        """Get system statistics.
+
+        Returns:
+            Dictionary with stats (total_keys, cached_models, providers, all_keys)
+        """
         return {
-            'total_keys': len(self._index),
-            'cached_models': len(self._model_cache),
-            'providers': list(self.PROVIDERS.keys()),
-            'all_keys': self.list_keys(),
+            "total_keys": len(self._index),
+            "cached_models": len(self._model_cache),
+            "providers": list(self.PROVIDERS.keys()),
+            "all_keys": self.list_keys(),
         }
-    
+
     def print_config(self) -> None:
-        """打印完整配置（用于调试）"""
-        print("\n" + "="*60)
-        print("📋 完整配置信息")
-        print("="*60)
-        
-        # 按首字母分组显示
+        """Print complete configuration (for debugging).
+
+        Masks sensitive information (keys, tokens, passwords, secrets).
+        """
+        print("\n" + "=" * 60)
+        print("Complete Configuration")
+        print("=" * 60)
+
+        # Display grouped by first letter
         current_group = None
         for key in self.list_keys():
-            group = key.split('.')[0]
+            group = key.split(".")[0]
             if group != current_group:
                 if current_group is not None:
                     print()
                 print(f"\n[{group}]")
                 current_group = group
-            
+
             value = self._index[key]
-            # 对敏感信息进行脱敏
-            if any(s in key.lower() for s in ['key', 'token', 'password', 'secret']):
-                value = '***' if value else value
+            # Mask sensitive information
+            if any(s in key.lower() for s in ["key", "token", "password", "secret"]):
+                value = "***" if value else value
             print(f"  {key}: {value}")
-        
-        print("\n" + "="*60 + "\n")
+
+        print("\n" + "=" * 60 + "\n")
 
 
-def get_config(config_path: str = 'config.json') -> Config:
-    """
-    创建配置容器
-    
+def get_config(config_path: str = "config.json") -> Config:
+    """Create configuration instance.
+
     Args:
-        config_path: 配置文件路径
-    
+        config_path: Path to configuration file
+
     Returns:
-        Config 实例
-    
-    使用示例:
-        di = get_config('config.json')
-        value = di.persist_directory
+        Config instance
+
+    Example:
+        >>> config = get_config('config.json')
+        >>> value = config.persist_directory
     """
     return Config(config_path)
-
-
-# 便利函数：注册自定义 provider
-def register_provider(name: str, chat_class: str, embedding_class: str) -> None:
-    """
-    注册自定义 provider（可选）
-    
-    使用示例:
-        register_provider('my_provider',
-            'my_lib.ChatModel',
-            'my_lib.Embeddings'
-        )
-    """
-    Config.PROVIDERS[name] = {
-        'chat': chat_class,
-        'embedding': embedding_class,
-    }
-    logger.info(f"✅ Provider '{name}' 已注册")
-
-
-__all__ = ['Config', 'get_config', 'register_provider']
