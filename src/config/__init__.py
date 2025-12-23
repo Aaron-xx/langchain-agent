@@ -1,7 +1,8 @@
-"""Configuration management"""
-from .config import Config, get_config, register_provider
+"""Configuration management."""
+
+from .config import Config, get_config
+
 __all__ = [
-    'Config',
-    'get_config',
-    'register_provider'
+    "Config",
+    "get_config",
 ]

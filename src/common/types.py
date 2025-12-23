@@ -1,24 +1,43 @@
-"""Shared type definitions - common types only"""
-from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Literal, TYPE_CHECKING
+"""Shared type definitions for the RAG system."""
+
+from typing import TYPE_CHECKING, Any
+
 from typing_extensions import TypedDict
-from enum import Enum
+
 
 if TYPE_CHECKING:
     from src.config.config import Config
+    from src.services.document_monitor import DocumentMonitorService
     from src.tools.documents import DocumentManager
 
+
 class DocumentChunk(TypedDict):
-    """Document chunk with metadata."""
+    """Document chunk with metadata.
+
+    Attributes:
+        content: Chunk text content
+        metadata: Associated metadata
+        source: Source document path
+        page_number: Optional page number
+        chunk_id: Unique chunk identifier
+    """
+
     content: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     source: str
-    page_number: Optional[int]
+    page_number: int | None
     chunk_id: str
 
-@dataclass
-class RuntimeContext:
-    """Runtime context containing configuration and document manager."""
-    config: 'Config'
-    doc_manager: 'DocumentManager'
-    
+
+class RuntimeContext(TypedDict, total=False):
+    """Runtime context containing configuration and services.
+
+    Attributes:
+        config: Configuration instance
+        doc_manager: Document manager instance
+        doc_monitor: Optional document monitor service
+    """
+
+    config: "Config"
+    doc_manager: "DocumentManager"
+    doc_monitor: "DocumentMonitorService"
