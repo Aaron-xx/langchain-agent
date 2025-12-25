@@ -30,7 +30,7 @@ class AgentConfig:
 
 
 # Import all prompt functions
-from src.agents.dynamic_prompts import (
+from btliu.agents.dynamic_prompts import (
     analysis_prompt_with_context,
     decision_prompt_with_context,
     execution_prompt_with_context,

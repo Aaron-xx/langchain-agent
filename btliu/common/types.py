@@ -6,9 +6,9 @@ from typing_extensions import TypedDict
 
 
 if TYPE_CHECKING:
-    from src.config.config import Config
-    from src.services.document_monitor import DocumentMonitorService
-    from src.tools.documents import DocumentManager
+    from btliu.config.config import Config
+    from btliu.services.document_monitor import DocumentMonitorService
+    from btliu.tools.documents import DocumentManager
 
 
 class DocumentChunk(TypedDict):

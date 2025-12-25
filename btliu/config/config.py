@@ -5,6 +5,9 @@ This module provides a unified configuration system that supports:
 - Environment variable substitution with defaults
 - Flexible configuration access (attribute, dict, fuzzy matching)
 - Dynamic model loading with caching
+
+NOTE: LangChain imports are deferred to chat() and embedding() methods
+to enable instant CLI startup. Do not add LangChain imports at module level.
 """
 
 import json
@@ -15,10 +18,15 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from langchain.chat_models import init_chat_model
-from langchain.embeddings import init_embeddings
 
 load_dotenv()
+
+# Import paths module for multi-tier configuration
+try:
+    from . import paths
+except ImportError:
+    # Fallback if paths module not available
+    paths = None
 
 # Configure logging
 def get_log_level() -> int:
@@ -47,19 +55,35 @@ class Config:
     - Fuzzy: config.persistdirectory (underscores removed)
     """
 
-    def __init__(self, config_path: str = "config.json") -> None:
-        """Initialize configuration system.
+    def __init__(self, config_path: str | None = None) -> None:
+        """Initialize configuration system with multi-tiered support.
 
         Args:
-            config_path: Path to JSON configuration file
+            config_path: Optional explicit path to config file.
+                        If None, follows hierarchy: project -> global
 
         Raises:
-            FileNotFoundError: If config file does not exist
+            FileNotFoundError: If no config file exists
         """
+        # Determine config path
+        if config_path is None:
+            if paths is not None:
+                try:
+                    config_path = str(paths.find_config_path())
+                except FileNotFoundError:
+                    # Create default global config if none exists
+                    paths.ensure_global_config()
+                    config_path = str(paths.get_global_config_path())
+            else:
+                config_path = "config.json"
+
         logger.info(f"Loading configuration: {config_path}")
 
+        # Resolve path expansion
+        config_path = Path(config_path).expanduser()
+
         # Load JSON config
-        if not Path(config_path).exists():
+        if not config_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
         with open(config_path, "r", encoding="utf-8") as f:
@@ -67,9 +91,26 @@ class Config:
 
         logger.info("JSON configuration loaded")
 
+        # Merge with project config if using global config and paths available
+        if paths is not None and config_path == paths.get_global_config_path():
+            project_config = paths.get_project_config_path()
+            if project_config.exists():
+                with open(project_config, "r", encoding="utf-8") as f:
+                    project_raw = json.load(f)
+                    # Deep merge project overrides
+                    self._raw = self._deep_merge(self._raw, project_raw)
+                logger.info("Merged project configuration overrides")
+
+        # Store config path for reference
+        self._config_path = config_path
+
         # Replace environment variables
         self._raw = self._replace_env(self._raw)
         logger.info("Environment variables replaced")
+
+        # Expand user paths in configuration
+        self._raw = self._expand_paths(self._raw)
+        logger.info("Paths expanded")
 
         # Build flattened index
         self._index: dict[str, Any] = {}
@@ -297,6 +338,9 @@ class Config:
 
         logger.info(f"Loading {provider} chat model...")
 
+        # Lazy import LangChain to enable instant CLI startup
+        from langchain.chat_models import init_chat_model
+
         # Get configuration parameters
         config_key = f"models.chat.{provider}"
         params = self.get_group(config_key).copy()
@@ -333,6 +377,9 @@ class Config:
             return self._model_cache[cache_key]
 
         logger.info(f"Loading {provider} embedding model...")
+
+        # Lazy import LangChain to enable instant CLI startup
+        from langchain.embeddings import init_embeddings
 
         # Get configuration parameters
         config_key = f"models.embedding.{provider}"
@@ -402,18 +449,64 @@ class Config:
 
         print("\n" + "=" * 60 + "\n")
 
+    # ========== Multi-tier Configuration Support ==========
 
-def get_config(config_path: str = "config.json") -> Config:
+    def _deep_merge(self, base: dict, override: dict) -> dict:
+        """Deep merge two dictionaries.
+
+        Args:
+            base: Base dictionary
+            override: Override dictionary (takes precedence)
+
+        Returns:
+            Merged dictionary
+        """
+        result = base.copy()
+        for key, value in override.items():
+            # Skip comment keys (starting with #)
+            if key.startswith("#"):
+                continue
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = self._deep_merge(result[key], value)
+            else:
+                result[key] = value
+        return result
+
+    def _expand_paths(self, obj: Any) -> Any:
+        """Expand ~ in path strings.
+
+        Args:
+            obj: Object to process
+
+        Returns:
+            Object with paths expanded
+        """
+        if isinstance(obj, str):
+            return os.path.expanduser(obj)
+
+        if isinstance(obj, dict):
+            return {k: self._expand_paths(v) for k, v in obj.items()}
+
+        if isinstance(obj, list):
+            return [self._expand_paths(v) for v in obj]
+
+        return obj
+
+
+def get_config(config_path: str | None = None) -> Config:
     """Create configuration instance.
 
     Args:
-        config_path: Path to configuration file
+        config_path: Path to configuration file. If None, uses auto-discovery
+                    via paths module (project -> global -> create default).
 
     Returns:
         Config instance
 
     Example:
+        >>> # Auto-discover config file
+        >>> config = get_config()
+        >>> # Or specify explicit path
         >>> config = get_config('config.json')
-        >>> value = config.persist_directory
     """
     return Config(config_path)

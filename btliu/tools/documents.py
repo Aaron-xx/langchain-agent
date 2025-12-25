@@ -6,11 +6,13 @@ This module provides a document manager that:
 - Stores and retrieves embeddings using Qdrant vector store
 - Supports both vector search and BM25 retrieval
 - Smart index: tracks file changes to avoid reprocessing unchanged files
+- Multi-tier data directory: project-level (.btliu/data) + global (~/.btliu/data)
 """
 
 import hashlib
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -26,6 +28,13 @@ from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams
+
+# Import paths module for multi-tier data directory support
+try:
+    from ..config import paths
+except ImportError:
+    # Fallback if paths module not available
+    paths = None
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +68,33 @@ class DocumentManager:
                 - embedding(): Method returning embedding model
         """
         self.config = config
-        self.data_dir = Path(config.get("document_processing.data_dir", "."))
+
+        # Support multi-tiered data directory
+        data_dir_config = config.get("document_processing.data_dir", "./data/documents")
+        self.data_dir = Path(data_dir_config).expanduser()
+
+        # If specified data_dir doesn't exist, try project-level
+        if not self.data_dir.exists() and paths is not None:
+            project_data_dir = paths.get_project_data_dir() / "documents"
+            if project_data_dir.exists():
+                self.data_dir = project_data_dir
+                logger.info(f"Using project data directory: {self.data_dir}")
+            else:
+                # Fall back to global
+                global_data_dir = paths.get_global_data_dir() / "documents"
+                self.data_dir = global_data_dir
+                logger.info(f"Using global data directory: {self.data_dir}")
+
         self.chunk_size = config.get("document_processing.chunk_size", 1000)
         self.chunk_overlap = config.get("document_processing.chunk_overlap", 200)
         self.collection_name = config.get("vector_store.collection_name", "documents")
-        self.hash_index = Path(config.get("document_processing.hash_index_file", "./data/.hash_index.json"))
+
+        # Hash index with multi-tier support
+        hash_index_config = config.get("document_processing.hash_index_file", "./data/.hash_index.json")
+        self.hash_index = Path(hash_index_config).expanduser()
+
+        # Ensure hash index directory exists
+        self.hash_index.parent.mkdir(parents=True, exist_ok=True)
 
         # Initialize Qdrant client
         qdrant_url = config.get("vector_store.qdrant_url", ":memory:")
