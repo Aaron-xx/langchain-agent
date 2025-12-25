@@ -68,6 +68,9 @@ rich>=13.7.0
 click>=8.1.7
 pyyaml>=6.0.2
 
+# 文件系统监控
+watchdog>=3.0.0
+
 # ptpython for CLI
 ptpython>=3.0.0
 python-dotenv>=1.0.1

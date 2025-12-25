@@ -6,6 +6,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 
+import asyncio
 from src.config import get_config
 from src.tools.documents import DocumentManager
 from src.common import RuntimeContext
@@ -13,6 +14,19 @@ from src.common import RuntimeContext
 config = get_config()
 doc_manager = DocumentManager(config)
 context = RuntimeContext(config=config, doc_manager=doc_manager)
+
+# Initialize document monitor if enabled
+doc_monitor = None
+if config.get('document_monitor.enabled', False):
+    try:
+        from src.services import DocumentMonitorService
+        doc_monitor = DocumentMonitorService(context)
+        doc_monitor.start()
+        context['doc_monitor'] = doc_monitor
+    except ImportError as e:
+        print(f"Warning: Could not start document monitor. Missing dependency: {e}")
+    except Exception as e:
+        print(f"Warning: Failed to start document monitor: {e}")
 
 mode = "ucagent"
 task = None
@@ -95,8 +109,7 @@ async def run_query(line):
 
         print("\n")
     except asyncio.CancelledError:
-        print("\n⛔ cancelled\n")
-
+        print("\ncancelled\n")
 
 async def cli_main():
     global mode, task
@@ -114,6 +127,8 @@ async def cli_main():
                     mode = cmd
                     print_formatted_text(ANSI(f"\x1b[33m✓ {mode.upper()} mode\x1b[0m\n"))
                 elif cmd in ("exit","quit"):
+                    if doc_monitor:
+                        asyncio.create_task(doc_monitor.stop())
                     return
                 elif cmd == "help":
                     print_formatted_text(ANSI("\x1b[36mCommands: /ucagent /rag /raggraph /exit /help\x1b[0m"))
@@ -126,12 +141,16 @@ async def cli_main():
             if task and not task.done():
                 task.cancel()
             else:
+                if doc_monitor:
+                    asyncio.create_task(doc_monitor.stop())
                 print("\nbye")
                 return
         except EOFError:
             if task and not task.done():
                 task.cancel()
             else:
+                if doc_monitor:
+                    asyncio.create_task(doc_monitor.stop())
                 print("\nbye")
                 return
 

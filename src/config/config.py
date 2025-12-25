@@ -114,14 +114,14 @@ class Config:
             for key, value in obj.items():
                 full_path = f"{prefix}.{key}" if prefix else key
 
+                # Add to index with multiple access patterns (even for nested dicts)
+                self._index[key] = value
+                self._index[full_path] = value
+                self._index[key.replace("_", "").lower()] = value  # Fuzzy match
+
+                # Continue recursion for nested dicts
                 if isinstance(value, dict):
-                    # Continue recursion
                     self._flatten(value, full_path)
-                else:
-                    # Add to index with multiple access patterns
-                    self._index[key] = value
-                    self._index[full_path] = value
-                    self._index[key.replace("_", "").lower()] = value  # Fuzzy match
 
     def _replace_env(self, obj: Any) -> Any:
         """Recursively replace environment variables in configuration.
@@ -159,6 +159,12 @@ class Config:
     def __getattr__(self, key: str) -> Any:
         """Attribute access: config.persist_directory.
 
+        NOTE: This is a Python magic method, automatically called by Python
+        when accessing attributes. DO NOT call this method directly.
+
+        Usage:
+            config.log_level
+
         Args:
             key: Configuration key
 
@@ -180,6 +186,12 @@ class Config:
 
     def __getitem__(self, key: str) -> Any:
         """Dictionary access: config['vector_store.persist_directory'].
+
+        NOTE: This is a Python magic method, automatically called by Python
+        when using square bracket notation. DO NOT call this method directly.
+
+        Usage:
+            config['log_level']
 
         Args:
             key: Configuration key

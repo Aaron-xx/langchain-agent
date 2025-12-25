@@ -163,6 +163,7 @@ $RECYCLE.BIN/
 # Project specific
 # Vector databases and indexes
 data/chroma_db/
+data/documents/
 data/.hash_index.json
 data/vector_store/
 data/faiss_index/

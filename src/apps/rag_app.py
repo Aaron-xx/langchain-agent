@@ -26,8 +26,10 @@ class RAGApp:
         Returns:
             RAG agent instance
         """
-        self.agents, self.factory = await create_pre_agents(self.context)
-        self.ragagent = self.agents["rag_agent"]
+        agents, factory = await create_pre_agents(self.context)
+        self.ragagent = agents.get("rag_agent")
+        if self.ragagent is None:
+            raise ValueError("RAG agent not found")
         return self.ragagent
 
     async def astream(

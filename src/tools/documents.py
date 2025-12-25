@@ -322,8 +322,7 @@ class DocumentManager:
 
         # Split and add documents
         split_docs = self._split_documents(documents)
-        ids = [str(uuid4()) for _ in range(len(documents))]
-        self._vector_store.add_documents(split_docs, ids=ids)
+        self._vector_store.add_documents(split_docs)
 
         logger.info(f"Added {len(split_docs)} document chunks")
 

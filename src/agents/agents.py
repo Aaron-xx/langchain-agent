@@ -22,7 +22,9 @@ async def create_pre_agents(
     Returns:
         Tuple of (agents dictionary, AgentFactory instance)
     """
-    config = context["config"]
+    config = context.get("config")
+    if config is None:
+        raise ValueError("Config is required")
     llm = config.chat()
 
     retrieval_tools = get_all_retrievers()
