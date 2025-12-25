@@ -59,5 +59,19 @@
       "url": "http://ollama:5000/mcp",
       "timeout": 30
     }
+  },
+  "document_monitor": {
+    "enabled": true,
+    "debounce_time": 2.0,
+    "batch_size": 10,
+    "max_retries": 3,
+    "log_events": true,
+    "ignore_patterns": [
+      "*.tmp",
+      "*.swp",
+      "~*",
+      ".DS_Store",
+      "*.bak"
+    ]
   }
 }

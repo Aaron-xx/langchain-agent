@@ -5,11 +5,15 @@ This module provides a document manager that:
 - Splits documents into chunks using RecursiveCharacterTextSplitter
 - Stores and retrieves embeddings using Qdrant vector store
 - Supports both vector search and BM25 retrieval
+- Smart index: tracks file changes to avoid reprocessing unchanged files
 """
 
+import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 from langchain_community.document_loaders import (
     JSONLoader,
@@ -51,6 +55,7 @@ class DocumentManager:
                 - vector_store.collection_name: Collection name
                 - document_processing.chunk_size: Text chunk size
                 - document_processing.chunk_overlap: Chunk overlap
+                - document_processing.hash_index_file: Path to hash index file
                 - embedding(): Method returning embedding model
         """
         self.config = config
@@ -58,6 +63,7 @@ class DocumentManager:
         self.chunk_size = config.get("document_processing.chunk_size", 1000)
         self.chunk_overlap = config.get("document_processing.chunk_overlap", 200)
         self.collection_name = config.get("vector_store.collection_name", "documents")
+        self.hash_index = Path(config.get("document_processing.hash_index_file", "./data/.hash_index.json"))
 
         # Initialize Qdrant client
         qdrant_url = config.get("vector_store.qdrant_url", ":memory:")
@@ -171,6 +177,87 @@ class DocumentManager:
         )
         return splitter.split_documents(documents)
 
+    def _compute_file_hash(self, file_path: str) -> str:
+        """Compute hash of file for change detection.
+
+        Args:
+            file_path: Path to the file
+
+        Returns:
+            MD5 hash (first 16 characters)
+        """
+        with open(file_path, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()[:16]
+
+    def _smart_index(self) -> tuple[bool, set[str], set[str]]:
+        """Check which documents changed using hash comparison.
+
+        Returns:
+            Tuple of (has_changed, added_files, removed_files):
+                - has_changed: True if any file changed
+                - added_files: Set of new or modified file paths
+                - removed_files: Set of deleted file paths
+        """
+        hash_file = self.hash_index
+
+        # Scan current files
+        current_files = set()
+        current_hashes = {}
+        for file_path in self.data_dir.rglob("*"):
+            if file_path.is_file() and file_path.suffix in self.LOADERS:
+                path_str = str(file_path)
+                current_files.add(path_str)
+                current_hashes[path_str] = self._compute_file_hash(path_str)
+
+        # Load old hash index
+        old_hashes = {}
+        if hash_file.exists():
+            try:
+                with open(hash_file) as f:
+                    old_hashes = json.load(f)
+            except (json.JSONDecodeError, IOError) as e:
+                logger.warning(f"Failed to read hash index: {e}")
+
+        # Calculate differences
+        added_files = current_files - set(old_hashes.keys())
+        removed_files = set(old_hashes.keys()) - current_files
+
+        # Detect modified files
+        for path, new_hash in current_hashes.items():
+            if path in old_hashes and old_hashes[path] != new_hash:
+                added_files.add(path)
+
+        has_changed = bool(added_files or removed_files)
+
+        if has_changed:
+            hash_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(hash_file, "w") as f:
+                json.dump(current_hashes, f)
+
+        return has_changed, added_files, removed_files
+
+    def del_documents(self, file_path: str) -> None:
+        """Delete all documents with matching source metadata.
+
+        Args:
+            file_path: Source file path to delete from vector store
+        """
+        try:
+            self._client.delete(
+                collection_name=self.collection_name,
+                points_selector=Filter(
+                    must=[
+                        FilterCondition(
+                            key="source",
+                            match=MatchValue(value=file_path)
+                        )
+                    ]
+                ),
+            )
+            logger.info(f"Deleted documents for source: {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to delete documents for {file_path}: {e}")
+
     def reindex(self, documents: list[Document] | None = None) -> None:
         """Reindex all documents by clearing and reloading.
 
@@ -206,19 +293,37 @@ class DocumentManager:
     def add_documents(self, documents: list[Document] | None = None) -> None:
         """Add or update documents incrementally.
 
+        When documents is None, uses smart index to detect changes and only
+        processes new or modified files.
+
         Args:
             documents: Optional list of documents. If None, loads from data_dir
         """
         if documents is None:
-            documents = self._load_all_documents()
+            # Use smart index to detect new/modified files
+            has_changed, added_files, _ = self._smart_index()
+            if not has_changed or not added_files:
+                logger.info("Documents unchanged, skipping update")
+                return
 
+            # Process only new/modified files
+            for file_path in added_files:
+                docs = self._load_document(file_path)
+                if docs:
+                    split_docs = self._split_documents(docs)
+                    self._vector_store.add_documents(split_docs)
+            logger.info(f"Processed {len(added_files)} changed files")
+            return
+
+        # Original logic: process provided documents
         if not documents:
             logger.warning("No documents to add")
             return
 
         # Split and add documents
         split_docs = self._split_documents(documents)
-        self._vector_store.add_documents(split_docs)
+        ids = [str(uuid4()) for _ in range(len(documents))]
+        self._vector_store.add_documents(split_docs, ids=ids)
 
         logger.info(f"Added {len(split_docs)} document chunks")
 
@@ -240,6 +345,7 @@ class DocumentManager:
     def get_retriever(
         self,
         retriever_type: str = "basic",
+        k: int = 4,
         documents: list[Document] | None = None,
     ) -> Any:
         """Get retriever by type.
@@ -255,7 +361,7 @@ class DocumentManager:
             ValueError: If unsupported retriever_type or missing documents for BM25
         """
         if retriever_type == "basic":
-            return self._vector_store.as_retriever()
+            return self._vector_store.as_retriever(k=k)
 
         if retriever_type == "bm25":
             if documents is None:
