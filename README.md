@@ -203,19 +203,14 @@ src/
 │   ├── retrievers.py     # Search strategies (vector, BM25, ensemble)
 │   └── mcp_tools.py      # MCP protocol tools
 ├── apps/                 # Chain-based applications
-│   └── ucagent_app.py    # UCAgent application wrapper
+│   ├── ucagent_app.py    # UCAgent application wrapper
+│   └── rag_app.py        # RAG application wrapper
 ├── agents/               # Agent implementations
 │   ├── agents.py         # Agent factory and creation
 │   ├── factory.py        # Agent factory class
 │   ├── config.py         # Agent configurations
 │   └── dynamic_prompts.py# Agent-specific prompts
-├── graphs/               # LangGraph workflows
-│   ├── rag_graph.py      # RAG graph implementation
-│   ├── states.py         # Graph state definitions
-│   └── utils/            # Graph utilities
-│       ├── nodes.py      # Graph node implementations
-│       └── utilts.py     # Graph helper functions
-├── services/             # Service layer (currently empty)
+├── services/             # Service layer
 └── cli/                  # Command-line interface
     └── cli.py            # Interactive CLI with mode switching
 ```
@@ -273,12 +268,6 @@ async def custom_search(query: str, runtime: ToolRuntime[RuntimeContext], k: int
 1. Define prompt function in `src/agents/dynamic_prompts.py`
 2. Add configuration in `src/agents/config.py`
 3. Import and add to `PRESETS` dictionary
-
-### Extending Graph Nodes
-
-1. Create node function in `src/graphs/utils/nodes.py`
-2. Follow the async node pattern with state parameter
-3. Update routing logic in `src/graphs/utils/utilts.py`
 
 ## Troubleshooting
 
