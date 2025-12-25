@@ -41,11 +41,11 @@
     "cache_ttl": 3600
   },
   "document_processing": {
-    "data_dir": "./data/documents",
+    "data_dir": "~/.btliu/data/documents",
     "chunk_size": 1000,
     "chunk_overlap": 200,
     "enable_smart_index": true,
-    "hash_index_file": "./data/.hash_index.json"
+    "hash_index_file": "~/.btliu/data/.hash_index.json"
   },
   "retrieval": {
     "default_k": 5,
