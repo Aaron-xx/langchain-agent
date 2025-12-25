@@ -7,7 +7,6 @@ This module provides a unified configuration system that supports:
 - Dynamic model loading with caching
 """
 
-import importlib
 import json
 import logging
 import os
@@ -16,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+from langchain.chat_models import init_chat_model
+from langchain.embeddings import init_embeddings
 
 load_dotenv()
 
@@ -45,26 +46,6 @@ class Config:
     - Dict: config['vector_store.persist_directory']
     - Fuzzy: config.persistdirectory (underscores removed)
     """
-
-    # Supported LLM providers
-    PROVIDERS: dict[str, dict[str, str]] = {
-        "openai": {
-            "chat": "langchain_openai.ChatOpenAI",
-            "embedding": "langchain_openai.OpenAIEmbeddings",
-        },
-        "ollama": {
-            "chat": "langchain_ollama.ChatOllama",
-            "embedding": "langchain_ollama.OllamaEmbeddings",
-        },
-        "anthropic": {
-            "chat": "langchain_anthropic.ChatAnthropic",
-            "embedding": "langchain_community.embeddings.HuggingFaceEmbeddings",
-        },
-        "huggingface": {
-            "chat": "langchain_huggingface.ChatHuggingFace",
-            "embedding": "langchain_huggingface.HuggingFaceEmbeddings",
-        },
-    }
 
     def __init__(self, config_path: str = "config.json") -> None:
         """Initialize configuration system.
@@ -298,98 +279,78 @@ class Config:
         return "ollama" if env_type == "internal" else "openai"
 
     def chat(self, provider: str = "openai") -> Any:
-        """Get chat model instance.
+        """Get chat model instance with caching.
 
         Args:
-            provider: Provider name (openai|ollama|anthropic|huggingface)
+            provider: Provider name (currently ignored, uses config default)
 
         Returns:
             Chat model instance
         """
         provider = self._get_default_provider("chat")
-        return self._get_model(provider, "chat")
+        cache_key = f"{provider}_chat"
 
-    def embedding(self, provider: str = "openai") -> Any:
-        """Get embedding model instance.
-
-        Args:
-            provider: Provider name
-
-        Returns:
-            Embedding model instance
-        """
-        return self._get_model("ollama", "embedding")
-
-    def _get_model(self, provider: str, model_type: str) -> Any:
-        """Internal method: Create and cache model instance.
-
-        Args:
-            provider: Provider name
-            model_type: Model type ('chat' or 'embedding')
-
-        Returns:
-            Model instance
-
-        Raises:
-            ValueError: If provider or model_type is not supported
-            ImportError: If provider module cannot be imported
-        """
         # Check cache
-        cache_key = f"{provider}_{model_type}"
         if cache_key in self._model_cache:
             logger.info(f"Model cache hit: {cache_key}")
             return self._model_cache[cache_key]
 
-        # Validate provider
-        if provider not in self.PROVIDERS:
-            available = ", ".join(self.PROVIDERS.keys())
-            raise ValueError(f"Unknown provider: '{provider}'. Supported: {available}")
+        logger.info(f"Loading {provider} chat model...")
 
-        if model_type not in self.PROVIDERS[provider]:
-            available = ", ".join(self.PROVIDERS[provider].keys())
-            raise ValueError(
-                f"Provider '{provider}' does not support '{model_type}'. Supported: {available}"
-            )
+        # Get configuration parameters
+        config_key = f"models.chat.{provider}"
+        params = self.get_group(config_key).copy()
+        model_name = params.pop("model")
+        params.pop("provider", None)
 
-        try:
-            logger.info(f"Loading {provider} {model_type} model...")
+        # Create model using LangChain's init_chat_model
+        model = init_chat_model(
+            model=model_name,
+            model_provider=provider,
+            **params
+        )
 
-            # Get class path
-            class_path = self.PROVIDERS[provider][model_type]
-            module_path, class_name = class_path.rsplit(".", 1)
+        # Cache
+        self._model_cache[cache_key] = model
+        logger.info(f"{provider} chat model loaded successfully")
+        return model
 
-            # Dynamic import
-            try:
-                module = importlib.import_module(module_path)
-            except ImportError as e:
-                raise ImportError(
-                    f"Cannot import {module_path}. "
-                    f"Install: pip install langchain-{provider}"
-                ) from e
+    def embedding(self, provider: str = "openai") -> Any:
+        """Get embedding model instance with caching.
 
-            cls = getattr(module, class_name)
+        Args:
+            provider: Provider name (currently ignored, uses ollama)
 
-            # Get configuration parameters
-            config_key = f"models.{model_type}.{provider}"
-            params = self.get_group(config_key)
+        Returns:
+            Embedding model instance
+        """
+        provider = "ollama"
+        cache_key = f"{provider}_embedding"
 
-            # Clean parameters (remove unnecessary fields)
-            params = {k: v for k, v in params.items() if k != "provider"}
+        # Check cache
+        if cache_key in self._model_cache:
+            logger.info(f"Model cache hit: {cache_key}")
+            return self._model_cache[cache_key]
 
-            logger.info(f"Model parameters: {params}")
+        logger.info(f"Loading {provider} embedding model...")
 
-            # Create instance
-            instance = cls(**params)
+        # Get configuration parameters
+        config_key = f"models.embedding.{provider}"
+        params = self.get_group(config_key).copy()
+        model_name = params.pop("model")
+        params.pop("provider", None)
 
-            # Cache
-            self._model_cache[cache_key] = instance
+        # Create model using LangChain's init_embeddings
+        model = init_embeddings(
+            model=model_name,
+            provider=provider,
+            **params
+        )
 
-            logger.info(f"{provider} {model_type} model loaded successfully")
-            return instance
-
-        except Exception as e:
-            logger.error(f"Model loading failed: {e}")
-            raise
+        # Cache
+        self._model_cache[cache_key] = model
+        logger.info(f"{provider} embedding model loaded successfully")
+        return model
 
     # ========== Utility Methods ==========
 
