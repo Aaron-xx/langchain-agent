@@ -1,31 +1,56 @@
 #!/usr/bin/env python3
-"""CLI module for btliu with lazy initialization support.
+"""CLI module for btliu with instant startup.
 
-This module provides an interactive command-line interface for the RAG system
-with support for multiple execution modes (ucagent, rag).
-
-Heavy components (config, DocumentManager, RuntimeContext) are imported
-on-demand in lazy_context.py to enable instant CLI startup.
+Background initialization runs in a separate thread, so CLI starts
+instantly (< 100ms) and initialization happens in parallel.
 """
 import asyncio
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor
 from itertools import cycle
 from prompt_toolkit import PromptSession, print_formatted_text, ANSI
 from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.history import FileHistory
 
-# Heavy imports removed - now done in lazy_context.py for instant startup
-# from btliu.config import get_config
-# from btliu.tools.documents import DocumentManager
-# from btliu.common import RuntimeContext
-
 # Try to import paths module for working directory display (lightweight)
 try:
     from ..config import paths as paths_module
 except (ImportError, ValueError):
     paths_module = None
+
+
+# ============================================================================
+# BACKGROUND INITIALIZATION
+# ============================================================================
+
+_executor = ThreadPoolExecutor(max_workers=1)
+_context = None
+_init_future = None
+
+
+def _init_context():
+    """Initialize context in background thread.
+
+    This runs in a separate thread, so CLI is not blocked.
+    All heavy imports happen here.
+    """
+    from btliu.config import get_config
+    from btliu.tools import DocumentManager
+    from btliu.common import RuntimeContext
+
+    config = get_config()
+    doc_manager = DocumentManager(config)
+    return RuntimeContext(config=config, doc_manager=doc_manager)
+
+
+def _ensure_context():
+    """Ensure context is initialized, waits if necessary."""
+    global _context, _init_future
+    if _context is None:
+        _context = _init_future.result()
+    return _context
 
 
 # ============================================================================
@@ -71,50 +96,16 @@ session = PromptSession(history=FileHistory(history_file), completer=completer)
 # APP FACTORY FUNCTIONS
 # ============================================================================
 
-def create_ucagent_app(context=None):
-    """Create UCAgent application.
-
-    Args:
-        context: RuntimeContext (uses global if None)
-
-    Returns:
-        UCAgent application instance
-    """
-    if context is None:
-        context = get_context()
+def create_ucagent_app(context):
+    """Create UCAgent application."""
     from btliu.apps.ucagent_app import UcagentApp
     return UcagentApp(context)
 
 
-def create_rag_app(context=None):
-    """Create RAG application.
-
-    Args:
-        context: RuntimeContext (uses global if None)
-
-    Returns:
-        RAG application instance
-    """
-    if context is None:
-        context = get_context()
+def create_rag_app(context):
+    """Create RAG application."""
     from btliu.apps.rag_app import RAGApp
     return RAGApp(context)
-
-
-def create_rag_graph(context=None):
-    """Create RAG graph.
-
-    Args:
-        context: RuntimeContext (uses global if None)
-
-    Returns:
-        RAG graph instance
-    """
-    if context is None:
-        context = get_context()
-    app = create_rag_app(context)
-    graph = app.get_agent()
-    return graph
 
 
 # ============================================================================
@@ -122,13 +113,7 @@ def create_rag_graph(context=None):
 # ============================================================================
 
 async def _stream_output(app, payload, runtime=None):
-    """Stream output from an application.
-
-    Args:
-        app: Application instance
-        payload: Input payload
-        runtime: Optional runtime configuration
-    """
+    """Stream output from an application."""
     global first_token_received
     async for token in app.astream(payload, runtime=runtime):
         if not first_token_received:
@@ -141,31 +126,13 @@ async def _stream_output(app, payload, runtime=None):
             sys.stdout.flush()
 
 
-async def run_query(line, lazy_ctx=None):
-    """Run a query with lazy context support.
-
-    Waits for background initialization to complete before executing
-    the query. If initialization is already done, executes immediately.
-
-    Args:
-        line: User input line
-        lazy_ctx: LazyContext (uses global singleton if None)
-    """
+async def run_query(line):
+    """Run a query, waiting for background init if needed."""
     global mode, first_token_received
     first_token_received = False
 
-    if lazy_ctx is None:
-        from .lazy_context import get_lazy_context
-        lazy_ctx = get_lazy_context()
-
-    # Wait for background initialization to complete
-    if not lazy_ctx.is_ready():
-        print("\x1b[90mInitializing...\x1b[0m", file=sys.stderr, flush=True)
-        await lazy_ctx.wait_ready()
-        print("\x1b[90mReady!\x1b[0m", file=sys.stderr, flush=True)
-
-    # Get the fully initialized context
-    context = lazy_ctx.get()
+    # Ensure context is ready
+    context = _ensure_context()
 
     try:
         payload = {"messages": [{"role": "user", "content": line}]}
@@ -190,33 +157,23 @@ async def run_query(line, lazy_ctx=None):
 # ============================================================================
 
 async def cli_main():
-    """Main CLI entry point with instant startup.
+    """Main CLI entry point with instant startup."""
+    global mode, task, _init_future
 
-    Instant startup strategy:
-    1. Start background initialization immediately (non-blocking)
-    2. Display prompt instantly (< 100ms)
-    3. User can start typing immediately
-    4. First query waits for background init to complete
-    """
-    global mode, task, _doc_monitor
+    # Start background initialization (non-blocking)
+    _init_future = _executor.submit(_init_context)
 
-    # 1. Start background initialization immediately (non-blocking)
-    from .lazy_context import get_lazy_context
-    lazy_ctx = get_lazy_context()
-    lazy_ctx.start_background_init()
-
-    # 2. Display startup info instantly (no heavy imports)
+    # Display startup info instantly
     print("CLI ready  /ucagent  /rag  /help  /exit  Ctrl+C cancel\n")
 
-    # 3. Show working directory info (lightweight, no heavy imports)
     if paths_module is not None:
         try:
             print(f"Working directory: {paths_module.get_working_dir()}")
             print(f"Config: {paths_module.find_config_path()}\n")
         except Exception:
-            pass  # Skip if paths not available
+            pass
 
-    # 4. Enter interactive loop (instant response to user)
+    # Enter interactive loop
     while True:
         try:
             with patch_stdout():
@@ -230,13 +187,12 @@ async def cli_main():
                     mode = cmd
                     print_formatted_text(ANSI(f"\x1b[33m✓ {mode.upper()} mode\x1b[0m\n"))
                 elif cmd in ("exit", "quit"):
-                    await lazy_ctx.cleanup()
+                    _executor.shutdown(wait=False)
                     return
                 elif cmd == "help":
                     print_formatted_text(ANSI("\x1b[36mCommands: /ucagent /rag /exit /help\x1b[0m"))
                 continue
-            # 5. Run query (will wait for background init if not ready)
-            task = asyncio.create_task(run_query(line, lazy_ctx))
+            task = asyncio.create_task(run_query(line))
             spinner_task = asyncio.create_task(spinner(task))
             await task
             spinner_task.cancel()
@@ -244,13 +200,13 @@ async def cli_main():
             if task and not task.done():
                 task.cancel()
             else:
-                await lazy_ctx.cleanup()
+                _executor.shutdown(wait=False)
                 print("\nbye")
                 return
         except EOFError:
             if task and not task.done():
                 task.cancel()
             else:
-                await lazy_ctx.cleanup()
+                _executor.shutdown(wait=False)
                 print("\nbye")
                 return
