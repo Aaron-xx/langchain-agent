@@ -17,6 +17,14 @@ langgraph-cli[inmem]>=0.4.7
 langgraph-checkpoint>=2.1.0
 langgraph-checkpoint-postgres>=2.1.0
 
+# 工具
+pyjwt
+rank_bm25
+urwid
+deepagents
+langfuse
+langchain-mcp-adapters
+
 # Web 框架 - 最新版本
 fastapi>=0.121.0
 uvicorn[standard]>=0.33.0
@@ -47,6 +55,7 @@ chromadb>=0.4.0
 langchain-chroma>=0.2.1
 faiss-cpu>=1.7.0
 sentence-transformers>=3.0.0
+langchain_qdrant
 
 # 文档处理 - 最新版本
 python-multipart>=0.0.18
