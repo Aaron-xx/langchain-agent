@@ -8,6 +8,7 @@ from langgraph.store.memory import InMemoryStore
 from btliu.agents.factory import AgentFactory
 from btliu.agents.config import PRESETS
 from btliu.common import RuntimeContext
+from btliu.config import paths
 from btliu.tools import get_all_retrievers, get_mcp_tools
 
 
@@ -39,7 +40,9 @@ async def create_pre_agents(
     }
     store = InMemoryStore()
 
-    factory = AgentFactory(llm, tools_dict, store)
+    # Use current working directory as agent filesystem root
+    working_dir = str(paths.get_working_dir())
+    factory = AgentFactory(llm, tools_dict, store, filesystem_root=working_dir)
 
     agents: dict[str, Any] = {}
     for preset_name in PRESETS:

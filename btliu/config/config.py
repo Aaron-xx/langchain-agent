@@ -19,14 +19,25 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 # Import paths module for multi-tier configuration
 try:
     from . import paths
 except ImportError:
     # Fallback if paths module not available
     paths = None
+
+# Load environment variables: prioritize global, fallback to current directory
+if paths is not None:
+    _global_env = paths.get_global_config_dir() / ".env"
+    _current_env = Path(".env")
+
+    if _global_env.exists():
+        load_dotenv(_global_env, override=True)
+    elif _current_env.exists():
+        load_dotenv(_current_env)
+else:
+    # Fallback to default behavior if paths not available
+    load_dotenv()
 
 # Configure logging
 def get_log_level() -> int:
