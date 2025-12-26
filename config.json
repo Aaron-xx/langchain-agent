@@ -5,11 +5,11 @@
     "chat": {
       "openai": {
         "provider": "openai",
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
         "model": "glm-4.5",
         "temperature": 0.7,
         "max_tokens": 2048,
-        "api_key": "${ZHIPUAI_API_KEY:-}"
+        "api_key": "${OPENAI_API_KEY:-}"
       },
       "ollama": {
         "provider": "ollama",
@@ -21,9 +21,9 @@
     "embedding": {
       "openai": {
         "provider": "openai",
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
         "model": "text-embedding-3-small",
-        "api_key": "${ZHIPUAI_API_KEY:-}"
+        "api_key": "${OPENAI_API_KEY:-}"
       },
       "ollama": {
         "provider": "ollama",

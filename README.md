@@ -111,7 +111,7 @@ The system uses a hierarchical configuration in `config.json`:
       "glm-4": {
         "provider": "langchain_openai.ChatOpenAI",
         "model": "glm-4.5",
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "base_url": "https://open.bigmodel.cn/api/coding/paas/v4",
         "api_key": "${ZHIPU_API_KEY:-}",
         "temperature": 0.8
       },
@@ -161,7 +161,7 @@ You can also use TOML configuration by creating `config.toml`:
 [models.chat.glm-4]
 provider = "langchain_openai.ChatOpenAI"
 model = "glm-4.5"
-base_url = "https://open.bigmodel.cn/api/paas/v4"
+base_url = "https://open.bigmodel.cn/api/coding/paas/v4"
 api_key = "${ZHIPU_API_KEY:-}"
 temperature = 0.8
 ```
