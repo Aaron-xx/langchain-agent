@@ -21,6 +21,7 @@ class AgentConfig:
     tools: list[str] | None = None
     middleware: list[str] | None = None
     store: Any | None = None
+    checkpointer: Any | None = None
 
     def __post_init__(self) -> None:
         if self.tools is None:
@@ -69,12 +70,12 @@ PRESETS: dict[str, AgentConfig] = {
         name="rag_agent",
         prompt_fn=rag_prompt_with_context,
         tools=["retrieval"],
-        middleware=["tool_retry", "pii_masking", "human_in_loop"],
+        middleware=["tool_retry", "pii_masking", "human_in_loop", "summarization"],
     ),
     "uc_agent": AgentConfig(
         name="uc_agent",
         prompt_fn=ucagent_prompt_with_context,
-        tools=["retrieval", "mcp"],
-        middleware=["tool_retry", "pii_masking", "filesystem", "human_in_loop"],
+        tools=["retrieval", "mcp", "memory"],
+        middleware=["tool_retry", "pii_masking", "filesystem", "filesystemfilesearch", "human_in_loop", "summarization", "bash"],
     ),
 }

@@ -11,7 +11,6 @@ from langchain.agents.middleware import ModelRequest, dynamic_prompt
 from typing_extensions import TypedDict
 
 # Constants for content limits
-MAX_HISTORY_MESSAGES = 3
 MAX_RETRIEVAL_MESSAGES = 5
 MAX_CONTENT_LENGTH = 300
 MAX_RETRIEVAL_LENGTH = 2000
@@ -114,32 +113,6 @@ def _add_background(prompt: str, context: dict) -> str:
     return prompt
 
 
-def _get_history(request: ModelRequest) -> str:
-    """提取历史对话记录.
-
-    Args:
-        request: 模型请求对象
-
-    Returns:
-        历史对话字符串，最多包含最近3条消息
-    """
-    if not hasattr(request, "state") or not request.state:
-        return ""
-
-    messages = request.state.get("messages", [])
-    if not messages:
-        return ""
-
-    history_lines = []
-    for msg in messages[-MAX_HISTORY_MESSAGES:]:
-        if isinstance(msg, dict):
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")[:MAX_CONTENT_LENGTH]
-            history_lines.append(f"[{role}]: {content}")
-
-    return "\n".join(history_lines) if history_lines else ""
-
-
 def _get_retrieval_context(request: ModelRequest) -> str:
     """获取检索结果（从工具调用或上下文）.
 
@@ -163,8 +136,6 @@ def _build_prompt(
     base: str,
     context: dict,
     fields: dict[str, str] | None = None,
-    with_history: bool = False,
-    request: ModelRequest | None = None,
 ) -> str:
     """构建完整提示词.
 
@@ -172,19 +143,12 @@ def _build_prompt(
         base: 基础提示词模板
         context: 上下文字典
         fields: 要注入的字段映射
-        with_history: 是否包含对话历史
-        request: 模型请求对象（用于获取历史）
 
     Returns:
         构建完成的提示词
     """
     if fields:
         base = _inject_fields(base, context, fields)
-
-    if with_history and request:
-        history = _get_history(request)
-        if history:
-            base += f"\n\n## 对话历史\n{history}"
 
     return _add_background(base, context)
 
@@ -358,17 +322,12 @@ def rag_prompt_with_context(request: ModelRequest) -> str:
         "document_types": "文档类型与可信度线索",
     })
 
-    # 添加历史记录
-    history = _get_history(request)
-    if history:
-        base += f"\n\n## 对话历史（仅用于理解上下文，不作为事实依据）\n{history}"
-
     return _add_background(base, context)
 
 
 @dynamic_prompt
 def ucagent_prompt_with_context(request: ModelRequest) -> str:
-    """UCAgent 执行型 / 验证型 Code-Agent Prompt（工程版）"""
+    """UCAgent 执行型 / 验证型 Code-Agent Prompt"""
     context = request.runtime.context or {}
 
     base = """## 角色定义（Identity）
@@ -480,19 +439,5 @@ def ucagent_prompt_with_context(request: ModelRequest) -> str:
             {"retrieval_results": retrieval_result},
             {"retrieval_results": "工具执行参考信息"},
         )
-
-    # ===== 注入历史（作为状态参考，而非结论）=====
-    history = _get_history(request)
-    if history:
-        base += f"""
-==================================================
-执行历史（Execution History）
-==================================================
-
-以下内容仅作为执行上下文参考，
-不得作为最终结论依据。
-
-{history}
-"""
 
     return _add_background(base, context)
