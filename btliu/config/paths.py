@@ -136,6 +136,15 @@ def get_data_dirs() -> list[Path]:
     return dirs if dirs else [get_global_data_dir()]
 
 
+def get_documents_dir() -> Path:
+    """Get global documents directory.
+
+    Returns:
+        Path to global documents dir (~/.btliu/data/documents)
+    """
+    return get_global_data_dir() / "documents"
+
+
 def ensure_global_config() -> Path:
     """Ensure global configuration exists, creating from template if needed.
 
