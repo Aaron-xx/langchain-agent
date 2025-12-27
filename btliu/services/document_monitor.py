@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileDeletedEvent
 
+from btliu.config import paths
+
 logger = logging.getLogger(__name__)
 
 
@@ -189,8 +191,8 @@ class DocumentMonitorService:
             return
 
         try:
-            # Get documents directory
-            documents_dir = Path(self.context['config'].get('document_processing.data_dir'))
+            # Get documents directory from paths module
+            documents_dir = paths.get_documents_dir()
             if not documents_dir.exists():
                 logger.warning(f"Documents directory does not exist: {documents_dir}")
                 return
@@ -266,7 +268,7 @@ class DocumentMonitorService:
         return {
             "running": self._running,
             "enabled": self.config.enabled,
-            "documents_dir": self.context['config'].get('document_processing.data_dir'),
+            "documents_dir": str(paths.get_documents_dir()),
             "debounce_time": self.config.debounce_time,
             "pending_created": created_count,
             "pending_deleted": deleted_count
