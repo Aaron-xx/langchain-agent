@@ -36,12 +36,14 @@ class RAGApp:
         self,
         query: dict[str, Any],
         runtime: RuntimeContext | None = None,
+        config: dict | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream RAG query execution through agents.
 
         Args:
             query: Query dictionary
             runtime: Optional runtime context
+            config: Optional LangGraph config (e.g., {"configurable": {"thread_id": "..."}})
 
         Yields:
             Streamed content chunks
@@ -51,9 +53,16 @@ class RAGApp:
 
         context = runtime or self.context
 
+        # Build config with thread_id if not provided
+        if config is None:
+            thread_id = context.get("thread_id")
+            if thread_id:
+                config = {"configurable": {"thread_id": thread_id}}
+
         async for chunk in self.ragagent.astream(
             query,
             context=context,
+            config=config,
             stream_mode="messages",
         ):
             token, metadata = chunk
