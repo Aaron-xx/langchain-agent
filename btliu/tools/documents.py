@@ -6,13 +6,14 @@ This module provides a document manager that:
 - Stores and retrieves embeddings using Qdrant vector store
 - Supports both vector search and BM25 retrieval
 - Smart index: tracks file changes to avoid reprocessing unchanged files
-- Multi-tier data directory: project-level (.btliu/data) + global (~/.btliu/data)
+- Documents directory: ~/.btliu/data/documents (global)
 """
 
 import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
@@ -27,7 +28,7 @@ from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams
+from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
 
 # Import paths module for multi-tier data directory support
 try:
@@ -59,31 +60,20 @@ class DocumentManager:
 
         Args:
             config: Configuration object with access methods:
-                - document_processing.data_dir: Source documents directory
                 - vector_store.qdrant_url: Qdrant server URL (default: :memory:)
                 - vector_store.collection_name: Collection name
                 - document_processing.chunk_size: Text chunk size
                 - document_processing.chunk_overlap: Chunk overlap
                 - document_processing.hash_index_file: Path to hash index file
                 - embedding(): Method returning embedding model
+
+        Note:
+            Documents directory is managed by paths.py module: ~/.btliu/data/documents
         """
         self.config = config
 
-        # Support multi-tiered data directory
-        data_dir_config = config.get("document_processing.data_dir", "./data/documents")
-        self.data_dir = Path(data_dir_config).expanduser()
-
-        # If specified data_dir doesn't exist, try project-level
-        if not self.data_dir.exists() and paths is not None:
-            project_data_dir = paths.get_project_data_dir() / "documents"
-            if project_data_dir.exists():
-                self.data_dir = project_data_dir
-                logger.info(f"Using project data directory: {self.data_dir}")
-            else:
-                # Fall back to global
-                global_data_dir = paths.get_global_data_dir() / "documents"
-                self.data_dir = global_data_dir
-                logger.info(f"Using global data directory: {self.data_dir}")
+        # Use paths module for global documents directory
+        self.data_dir = paths.get_documents_dir()
 
         self.chunk_size = config.get("document_processing.chunk_size", 1000)
         self.chunk_overlap = config.get("document_processing.chunk_overlap", 200)
@@ -158,6 +148,11 @@ class DocumentManager:
             loader = self.LOADERS[ext](file_path)
             docs = loader.load()
 
+            # Clean text content to remove invalid Unicode characters and noise
+            for doc in docs:
+                if hasattr(doc, 'page_content'):
+                    doc.page_content = self._clean_text(doc.page_content)
+
             # Add source metadata if not present
             for doc in docs:
                 if "source" not in doc.metadata:
@@ -207,6 +202,34 @@ class DocumentManager:
             separators=["\n\n", "\n", " ", ""],
         )
         return splitter.split_documents(documents)
+
+    def _clean_text(self, text: str) -> str:
+        """Clean text by removing invalid Unicode characters and noise.
+
+        Args:
+            text: Input text that may contain invalid characters
+
+        Returns:
+            Cleaned text with only valid UTF-8 characters
+        """
+        # Remove surrogate pairs (invalid UTF-16 surrogates in UTF-8)
+        text = re.sub(r'[\ud800-\udfff]', '', text)
+
+        # Remove other non-printable/control characters (except common whitespace)
+        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+
+        # Remove emojis and other symbols that cause encoding issues
+        text = re.sub(r'[\U0001f300-\U0001f9ff]', '', text)  # emojis
+        text = re.sub(r'[\U00002600-\U000027bf]', '', text)   # misc symbols
+        text = re.sub(r'[\U0001f000-\U0001f02f]', '', text)  # additional symbols
+
+        # Remove URLs
+        text = re.sub(r'http\S+', '', text)
+
+        # Normalize whitespace (remove extra spaces)
+        text = re.sub(r'\s+', ' ', text)
+
+        return text.strip()
 
     def _compute_file_hash(self, file_path: str) -> str:
         """Compute hash of file for change detection.
@@ -260,34 +283,42 @@ class DocumentManager:
 
         has_changed = bool(added_files or removed_files)
 
-        if has_changed:
-            hash_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(hash_file, "w") as f:
-                json.dump(current_hashes, f)
+        # Always ensure hash index file exists
+        hash_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(hash_file, "w") as f:
+            json.dump(current_hashes, f, indent=2)
 
         return has_changed, added_files, removed_files
 
-    def del_documents(self, file_path: str) -> None:
+    def del_documents(self, file_path: str) -> bool:
         """Delete all documents with matching source metadata.
 
         Args:
             file_path: Source file path to delete from vector store
+
+        Returns:
+            bool: True if deletion was successful, False otherwise
         """
         try:
+            filter_obj = Filter(
+                must=[
+                    FieldCondition(
+                        key="metadata.source",
+                        match=MatchValue(value=file_path)
+                    )
+                ]
+            )
+
             self._client.delete(
                 collection_name=self.collection_name,
-                points_selector=Filter(
-                    must=[
-                        FilterCondition(
-                            key="source",
-                            match=MatchValue(value=file_path)
-                        )
-                    ]
-                ),
+                points_selector=filter_obj,
             )
+
             logger.info(f"Deleted documents for source: {file_path}")
+            return True
         except Exception as e:
             logger.error(f"Failed to delete documents for {file_path}: {e}")
+            return False
 
     def reindex(self, documents: list[Document] | None = None) -> None:
         """Reindex all documents by clearing and reloading.
