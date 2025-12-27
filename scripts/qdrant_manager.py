@@ -16,8 +16,8 @@ import json
 from typing import List, Dict, Any
 from qdrant_client import QdrantClient
 from qdrant_client.models import Filter, FieldCondition, MatchValue
-from src.config.config import get_config
-from src.tools.documents import DocumentManager
+from btliu.config.config import get_config
+from btliu.tools.documents import DocumentManager
 
 
 def format_point(point, show_content=True, max_length=200):
