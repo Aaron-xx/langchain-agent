@@ -12,11 +12,9 @@ This module provides a document manager that:
 import hashlib
 import json
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any, Callable
-from uuid import uuid4
 
 from langchain_community.document_loaders import (
     JSONLoader,

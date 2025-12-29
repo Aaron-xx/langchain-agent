@@ -1,7 +1,7 @@
 """UC Agent application with agent management.
 
-This module provides the UcagentApp class for streaming UC agent query
-execution through LangGraph agents.
+IMPORTANT: store/checkpointer are injected separately (not from context)
+to avoid pickle issues. See cli.py WORKAROUND for full context.
 """
 
 from typing import Any, AsyncGenerator, Optional
@@ -11,19 +11,24 @@ from btliu.common import RuntimeContext
 
 
 class UcagentApp:
-    """UC Agent application with agent management.
+    """UC Agent application with agent management."""
 
-    This class manages UC agent initialization and provides streaming
-    query execution capabilities.
-    """
-
-    def __init__(self, context: RuntimeContext) -> None:
+    def __init__(
+        self,
+        context: RuntimeContext,
+        store: Any = None,
+        checkpointer: Any = None,
+    ) -> None:
         """Initialize the UC Agent application.
 
         Args:
-            context: Runtime context containing configuration and services
+            context: Runtime context (config, doc_manager, but NO store/checkpointer)
+            store: LangGraph store for cross-thread memory (injected by caller)
+            checkpointer: LangGraph checkpointer for persistence (injected by caller)
         """
         self.context = context
+        self.store = store
+        self.checkpointer = checkpointer
         self.agents = None
         self.factory = None
         self.ucagent = None
@@ -37,7 +42,9 @@ class UcagentApp:
         Raises:
             ValueError: If UC agent is not found
         """
-        agents, factory = await create_pre_agents(self.context)
+        agents, factory = await create_pre_agents(
+            self.context, store=self.store, checkpointer=self.checkpointer
+        )
         self.ucagent = agents.get("uc_agent")
         if self.ucagent is None:
             raise ValueError("UC agent not found")
@@ -49,31 +56,26 @@ class UcagentApp:
         runtime: Optional[RuntimeContext] = None,
         config: Optional[dict] = None,
     ) -> AsyncGenerator[Any, None]:
-        """Stream UC agent query execution through agents.
+        """Stream UC agent query execution.
 
         Args:
             query: User query string
-            runtime: Optional runtime context override (defaults to self.context)
+            runtime: Optional runtime context override
             config: Optional LangGraph config (e.g., {"configurable": {"thread_id": "..."}})
 
         Yields:
             (token, metadata) tuples from the agent stream
-            - token: Message object (AIMessageChunk, ToolMessage, etc.)
-            - metadata: Dictionary with langgraph_node, langgraph_step, etc.
         """
         if self.ucagent is None:
             await self.get_agent()
 
         context = runtime or self.context
 
-        # Build config with thread_id if not provided
         if config is None:
             thread_id = context.get("thread_id")
             if thread_id:
                 config = {"configurable": {"thread_id": thread_id}}
 
-        # Stream from agent in messages mode
-        # Returns (token, metadata) tuples - filtering handled by CLI layer
         async for chunk in self.ucagent.astream(
             query,
             context=context,

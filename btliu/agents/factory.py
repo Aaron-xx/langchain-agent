@@ -2,7 +2,12 @@
 
 from typing import Any, Callable
 
-from deepagents.backends import CompositeBackend, FilesystemBackend, StateBackend, StoreBackend
+from deepagents.backends import (
+    CompositeBackend,
+    FilesystemBackend,
+    StateBackend,
+    StoreBackend,
+)
 from deepagents.middleware import FilesystemMiddleware
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
@@ -14,7 +19,7 @@ from langchain.agents.middleware import (
 from langchain.agents.middleware import (
     FilesystemFileSearchMiddleware,
     SummarizationMiddleware,
-    ShellToolMiddleware
+    ShellToolMiddleware,
 )
 from langgraph.store.memory import InMemoryStore
 
@@ -23,7 +28,12 @@ from btliu.common import RuntimeContext
 
 
 class AgentFactory:
-    """Factory for creating configured agents with tools and middleware."""
+    """Factory for creating configured agents with tools and middleware.
+
+    NOTE: Middleware are created fresh on each agent creation (not cached).
+    This is required because unpicklable middleware are filtered from checkpoint
+    state by the custom serializer in btliu/cli/cli.py (see WORKAROUND comment).
+    """
 
     def __init__(
         self,
@@ -46,46 +56,6 @@ class AgentFactory:
         self.store = store or InMemoryStore()
         self.checkpointer = checkpointer
         self.filesystem_root = filesystem_root
-        self.MIDDLEWARE_MAP = self._build_middleware_map()
-
-    def _build_middleware_map(self) -> dict[str, Any]:
-        """Build middleware map with filesystem middleware using instance variables.
-
-        Returns:
-            Dictionary mapping middleware names to instances
-        """
-        return {
-            "tool_retry": ToolRetryMiddleware(max_retries=3),
-            "model_call_limit": ModelCallLimitMiddleware(run_limit=15),
-            "pii_masking": PIIMiddleware(pii_type="email", strategy="mask"),
-            "human_in_loop": HumanInTheLoopMiddleware(interrupt_on={"final_decision": True}),
-            "filesystem": FilesystemMiddleware(
-                backend=lambda rt: CompositeBackend(
-                    default=StateBackend(rt),  # 临时工作文件（可自动清理）
-                    routes={
-                        "/memories/": StoreBackend(rt),  # 跨会话持久化
-                        "/workspace/": FilesystemBackend(  # 真实文件系统访问
-                            root_dir=self.filesystem_root,
-                            virtual_mode=True,  # 沙箱模式，安全隔离
-                        ),
-                    },
-                )
-            ),
-            "filesystemfilesearch": FilesystemFileSearchMiddleware(
-                root_path=self.filesystem_root,
-                use_ripgrep=True,
-                max_file_size_mb=100,
-            ),
-            "summarization": SummarizationMiddleware(
-                model=self.llm,
-                trigger=("tokens", 4000),
-                keep=("messages", 10),
-                summary_prompt="请将以下对话历史进行摘要，保留关键决策点和技术细节：\n\n{messages}\n\n摘要:"
-            ),
-            "bash": ShellToolMiddleware(
-                workspace_root=self.filesystem_root,
-            ),
-        }
 
     def _get_tools(self, tool_names: list[str]) -> list:
         """Get tools by names.
@@ -103,7 +73,7 @@ class AgentFactory:
         return tools
 
     def _get_middleware(self, middleware_names: list[str]) -> list:
-        """Get middleware by names.
+        """Get middleware by names, creating fresh instances each time.
 
         Args:
             middleware_names: List of middleware names
@@ -113,8 +83,54 @@ class AgentFactory:
         """
         middleware = []
         for name in middleware_names:
-            if name in self.MIDDLEWARE_MAP:
-                middleware.append(self.MIDDLEWARE_MAP[name])
+            if name == "tool_retry":
+                middleware.append(ToolRetryMiddleware(max_retries=3))
+            elif name == "model_call_limit":
+                middleware.append(ModelCallLimitMiddleware(run_limit=15))
+            elif name == "pii_masking":
+                middleware.append(PIIMiddleware(pii_type="email", strategy="mask"))
+            elif name == "human_in_loop":
+                middleware.append(
+                    HumanInTheLoopMiddleware(interrupt_on={"final_decision": True})
+                )
+            elif name == "filesystem":
+                middleware.append(
+                    FilesystemMiddleware(
+                        backend=lambda rt: CompositeBackend(
+                            default=StateBackend(rt),
+                            routes={
+                                "/memories/": StoreBackend(rt),
+                                "/workspace/": FilesystemBackend(
+                                    root_dir=self.filesystem_root,
+                                    virtual_mode=True,
+                                ),
+                            },
+                        )
+                    )
+                )
+            elif name == "summarization":
+                middleware.append(
+                    SummarizationMiddleware(
+                        model=self.llm,
+                        trigger=("tokens", 4000),
+                        keep=("messages", 10),
+                        summary_prompt="请将以下对话历史进行摘要，保留关键决策点和技术细节：\n\n{messages}\n\n摘要:",
+                    )
+                )
+            elif name == "filesystemfilesearch":
+                middleware.append(
+                    FilesystemFileSearchMiddleware(
+                        root_path=self.filesystem_root,
+                        use_ripgrep=True,
+                        max_file_size_mb=100,
+                    )
+                )
+            elif name == "bash":
+                middleware.append(
+                    ShellToolMiddleware(
+                        workspace_root=self.filesystem_root,
+                    )
+                )
         return middleware
 
     def create(self, config: AgentConfig) -> Any:

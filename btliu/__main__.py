@@ -2,7 +2,6 @@
 """Main entry point for btliu CLI command."""
 import asyncio
 import sys
-import os
 
 # Ensure the package is importable
 from btliu.cli import cli_main

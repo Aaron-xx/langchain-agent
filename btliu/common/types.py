@@ -7,7 +7,6 @@ from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from btliu.config.config import Config
-    from btliu.services.document_monitor import DocumentMonitorService
     from btliu.tools.documents import DocumentManager
 
 
@@ -35,7 +34,6 @@ class RuntimeContext(TypedDict, total=False):
     Attributes:
         config: Configuration instance
         doc_manager: Document manager instance
-        doc_monitor: Optional document monitor service
         checkpointer: LangGraph checkpointer for session persistence
         store: LangGraph store for cross-thread memory
         thread_id: Current session thread ID
@@ -44,7 +42,6 @@ class RuntimeContext(TypedDict, total=False):
 
     config: "Config"
     doc_manager: "DocumentManager"
-    doc_monitor: "DocumentMonitorService"
     checkpointer: Any
     store: Any
     thread_id: str

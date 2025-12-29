@@ -1,6 +1,5 @@
 """Agent creation and management."""
 
-import asyncio
 from typing import Any
 
 from btliu.agents.factory import AgentFactory
@@ -12,11 +11,15 @@ from btliu.tools import get_all_retrievers, get_mcp_tools, get_memory_tools
 
 async def create_pre_agents(
     context: RuntimeContext,
+    store: Any = None,
+    checkpointer: Any = None,
 ) -> tuple[dict[str, Any], AgentFactory]:
     """Create all preset agents with their factory.
 
     Args:
         context: Runtime context containing configuration
+        store: Optional store instance (if None, extracted from context)
+        checkpointer: Optional checkpointer instance (if None, extracted from context)
 
     Returns:
         Tuple of (agents dictionary, AgentFactory instance)
@@ -41,9 +44,11 @@ async def create_pre_agents(
         "memory": memory_tools,
     }
 
-    # Get checkpointer and store from context
-    store = context.get("store")
-    checkpointer = context.get("checkpointer")
+    # Get checkpointer and store from parameters or context
+    if store is None:
+        store = context.get("store")
+    if checkpointer is None:
+        checkpointer = context.get("checkpointer")
 
     # Use current working directory as agent filesystem root
     working_dir = str(paths.get_working_dir())
@@ -52,7 +57,7 @@ async def create_pre_agents(
         tools_dict,
         store=store,
         checkpointer=checkpointer,
-        filesystem_root=working_dir
+        filesystem_root=working_dir,
     )
 
     agents: dict[str, Any] = {}

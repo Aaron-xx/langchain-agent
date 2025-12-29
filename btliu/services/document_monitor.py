@@ -1,15 +1,13 @@
 """Document monitoring service for automatic file change detection and processing."""
-import asyncio
 import fnmatch
 import logging
 import os
 import threading
-from pathlib import Path
-from typing import Set, Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileDeletedEvent
+from watchdog.events import FileSystemEventHandler
 
 from btliu.config import paths
 

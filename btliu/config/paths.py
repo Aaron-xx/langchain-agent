@@ -13,10 +13,8 @@ Design principles:
 - Working directory: Always current working directory
 """
 
-import os
 import json
 from pathlib import Path
-from typing import Optional
 
 # Package directory (relative to this file)
 PACKAGE_DIR = Path(__file__).parent.parent
@@ -224,8 +222,7 @@ def init_project_config() -> Path:
     if not project_config.exists():
         # Start with minimal config that extends global
         config = {
-            "#": "Project-specific configuration overrides",
-            "#": "Uncomment values to override global settings",
+            "#": "Project-specific configuration overrides - uncomment values to override global settings",
             "document_processing": {
                 "data_dir": "./.btliu/data/documents"
             }

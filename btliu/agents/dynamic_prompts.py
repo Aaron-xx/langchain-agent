@@ -33,6 +33,7 @@ class AgentContext(TypedDict, total=False):
         quality_requirements: 质量要求描述
         retrieval_results: 检索结果
     """
+
     task_type: str
     previous_results: list[Any]
     user_preferences: dict
@@ -172,10 +173,14 @@ def decision_prompt_with_context(request: ModelRequest) -> str:
 • 用数据和指标支撑建议
 • 提供具体的实施步骤"""
 
-    return _build_prompt(base, context, {
-        "previous_results": "前序结果",
-        "user_preferences": "用户偏好",
-    })
+    return _build_prompt(
+        base,
+        context,
+        {
+            "previous_results": "前序结果",
+            "user_preferences": "用户偏好",
+        },
+    )
 
 
 @dynamic_prompt
@@ -197,10 +202,14 @@ def analysis_prompt_with_context(request: ModelRequest) -> str:
 • 量化数据和指标支撑
 • 挖掘表面数据背后的原因"""
 
-    return _build_prompt(base, context, {
-        "previous_results": "前序结果",
-        "analysis_type": "分析类型",
-    })
+    return _build_prompt(
+        base,
+        context,
+        {
+            "previous_results": "前序结果",
+            "analysis_type": "分析类型",
+        },
+    )
 
 
 @dynamic_prompt
@@ -225,10 +234,14 @@ def planning_prompt_with_context(request: ModelRequest) -> str:
 • 每步都有输入和输出
 • 识别关键路径和风险点"""
 
-    return _build_prompt(base, context, {
-        "task_scope": "任务范围",
-        "constraints": "约束条件",
-    })
+    return _build_prompt(
+        base,
+        context,
+        {
+            "task_scope": "任务范围",
+            "constraints": "约束条件",
+        },
+    )
 
 
 @dynamic_prompt
@@ -261,9 +274,13 @@ def execution_prompt_with_context(request: ModelRequest) -> str:
 =====================
 第 {retry_count + 1} 次尝试，请基于前面失败原因调整方法"""
 
-    return _build_prompt(base, context, {
-        "quality_requirements": "质量要求",
-    })
+    return _build_prompt(
+        base,
+        context,
+        {
+            "quality_requirements": "质量要求",
+        },
+    )
 
 
 @dynamic_prompt
@@ -301,7 +318,6 @@ def rag_prompt_with_context(request: ModelRequest) -> str:
 1. 结论摘要（如有明确答案）
 2. 逐条事实说明（每条均附引用）
 3. 推断说明（如存在）
-4. 文档未覆盖或不确定的部分
 
 =====================
 引用格式要求
@@ -312,15 +328,23 @@ def rag_prompt_with_context(request: ModelRequest) -> str:
     # 从状态消息中获取最近的检索结果（工具返回）
     retrieval_result = _get_retrieval_context(request)
     if retrieval_result:
-        base = _inject_fields(base, {"retrieval_results": retrieval_result}, {
-            "retrieval_results": "检索文档内容（唯一事实来源）",
-        })
+        base = _inject_fields(
+            base,
+            {"retrieval_results": retrieval_result},
+            {
+                "retrieval_results": "检索文档内容（唯一事实来源）",
+            },
+        )
 
     # 注入其他上下文字段
-    base = _inject_fields(base, context, {
-        "retrieval_context": "本次检索聚焦的问题范围",
-        "document_types": "文档类型与可信度线索",
-    })
+    base = _inject_fields(
+        base,
+        context,
+        {
+            "retrieval_context": "本次检索聚焦的问题范围",
+            "document_types": "文档类型与可信度线索",
+        },
+    )
 
     return _add_background(base, context)
 
@@ -396,8 +420,7 @@ def ucagent_prompt_with_context(request: ModelRequest) -> str:
     if task_type:
         task_action_map = {
             "code_analysis": (
-                "• 必须基于工具返回的代码或检查结果\n"
-                "• 不得凭经验评价代码质量"
+                "• 必须基于工具返回的代码或检查结果\n• 不得凭经验评价代码质量"
             ),
             "test_generation": (
                 "• 必须生成至少一个测试\n"
@@ -414,10 +437,7 @@ def ucagent_prompt_with_context(request: ModelRequest) -> str:
                 "• 必须调用日志、重放或执行工具\n"
                 "• 不得直接给出“可能原因”列表"
             ),
-            "optimization": (
-                "• 必须基于工具度量结果\n"
-                "• 不得仅提供理论优化建议"
-            ),
+            "optimization": ("• 必须基于工具度量结果\n• 不得仅提供理论优化建议"),
         }
 
         base += f"""

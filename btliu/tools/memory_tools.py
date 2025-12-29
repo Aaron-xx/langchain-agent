@@ -1,8 +1,11 @@
-"""Cross-thread memory tools using RuntimeContext pattern.
+"""Cross-thread memory tools using LangGraph's ToolRuntime injection.
 
-This module provides tools for persisting user information across different
-conversations/sessions using AsyncPostgresStore. Memory is isolated per user
-via user_id from RuntimeContext.
+IMPORTANT: This module uses tool_runtime.store (injected by LangGraph) instead of
+context.get("store") to avoid including unpicklable AsyncPostgresStore in the
+agent context. See cli.py WORKAROUND for full context.
+
+The Store is injected by LangGraph via ToolRuntime when tools are called,
+not stored in the RuntimeContext passed to agent creation.
 """
 
 import time
@@ -43,7 +46,9 @@ async def save_memory(
         return "错误: context 不可用"
 
     user_id = context.get("user_id", "anonymous")
-    store = context.get("store")
+
+    # Get store directly from tool_runtime (injected by LangGraph)
+    store = tool_runtime.store
 
     if store is None:
         return "错误: Store 未配置，无法保存记忆"
@@ -99,7 +104,9 @@ async def recall_memory(
         return "错误: context 不可用"
 
     user_id = context.get("user_id", "anonymous")
-    store = context.get("store")
+
+    # Get store directly from tool_runtime (injected by LangGraph)
+    store = tool_runtime.store
 
     if store is None:
         return "错误: Store 未配置，无法检索记忆"
@@ -152,7 +159,9 @@ async def list_categories(
         return "错误: context 不可用"
 
     user_id = context.get("user_id", "anonymous")
-    store = context.get("store")
+
+    # Get store directly from tool_runtime (injected by LangGraph)
+    store = tool_runtime.store
 
     if store is None:
         return "错误: Store 未配置，无法列出类别"
