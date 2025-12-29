@@ -1,6 +1,7 @@
 {
   "log_level": "WARNING",
   "environment_type": "external",
+  "checkpoint_db_uri": "postgresql://langchain:langchain_postgres@postgres:5432/langchain",
   "models": {
     "chat": {
       "openai": {
@@ -35,7 +36,7 @@
   "vector_store": {
     "qdrant_url": "http://qdrant:6333",
     "collection_name": "rag_documents",
-    "similarity_threshold": 0.78,
+    "similarity_threshold": 0.70,
     "max_retrieved_docs": 4,
     "enable_caching": true,
     "cache_ttl": 3600

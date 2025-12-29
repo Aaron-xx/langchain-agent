@@ -62,8 +62,10 @@ class DocumentManager:
             config: Configuration object with access methods:
                 - vector_store.qdrant_url: Qdrant server URL (default: :memory:)
                 - vector_store.collection_name: Collection name
-                - document_processing.chunk_size: Text chunk size
-                - document_processing.chunk_overlap: Chunk overlap
+                - vector_store.similarity_threshold: Cosine distance threshold (default: None)
+                - vector_store.max_retrieved_docs: Max docs to return (default: 4)
+                - document_processing.chunk_size: Text chunk size (default: 1000)
+                - document_processing.chunk_overlap: Chunk overlap (default: 200)
                 - document_processing.hash_index_file: Path to hash index file
                 - embedding(): Method returning embedding model
 
@@ -75,9 +77,18 @@ class DocumentManager:
         # Use paths module for global documents directory
         self.data_dir = paths.get_documents_dir()
 
+        # Document processing configuration
         self.chunk_size = config.get("document_processing.chunk_size", 1000)
         self.chunk_overlap = config.get("document_processing.chunk_overlap", 200)
         self.collection_name = config.get("vector_store.collection_name", "documents")
+
+        # Retrieval configuration
+        # similarity_threshold: Cosine distance threshold (lower = more strict)
+        # - Qdrant uses distance: 0.0 = identical, 1.0 = unrelated
+        # - Converted to relevance score by LangChain: 1.0 - distance
+        # - Set to None to disable threshold filtering
+        self.similarity_threshold = config.get("vector_store.similarity_threshold", None)
+        self.max_retrieved_docs = config.get("vector_store.max_retrieved_docs", 4)
 
         # Hash index with multi-tier support
         hash_index_config = config.get("document_processing.hash_index_file", "./data/.hash_index.json")
@@ -406,25 +417,49 @@ class DocumentManager:
     def get_retriever(
         self,
         retriever_type: str = "basic",
-        k: int = 4,
+        k: int | None = None,
         documents: list[Document] | None = None,
     ) -> Any:
         """Get retriever by type.
 
         Args:
-            retriever_type: "basic" for vector search, "bm25" for BM25
-            documents: Required for BM25 retriever
+            retriever_type: Type of retriever ("basic" or "bm25")
+                - "basic": Vector similarity search with optional threshold filtering
+                - "bm25": BM25 keyword-based search
+            k: Number of documents to retrieve (default: use max_retrieved_docs from config)
+            documents: Required for BM25 retriever (loaded from data dir if None)
 
         Returns:
-            Retriever instance
+            Retriever instance (VectorStoreRetriever or BM25Retriever)
 
         Raises:
-            ValueError: If unsupported retriever_type or missing documents for BM25
+            ValueError: If unsupported retriever_type or no documents for BM25
+
+        Note:
+            Basic retriever configuration:
+            - Uses similarity_score_threshold if similarity_threshold is set
+            - Threshold acts as distance filter (only return docs with distance < threshold)
+            - Lower threshold = more strict (fewer results)
         """
         if retriever_type == "basic":
-            return self._vector_store.as_retriever(k=k)
+            # Use configured k if not provided
+            if k is None:
+                k = self.max_retrieved_docs
+
+            # Build retriever kwargs
+            retriever_kwargs = {"k": k}
+
+            # Add similarity threshold filtering if configured
+            if self.similarity_threshold is not None:
+                # search_type="similarity_score_threshold" filters by distance
+                # score_threshold is the maximum distance allowed
+                retriever_kwargs["search_type"] = "similarity_score_threshold"
+                retriever_kwargs["search_kwargs"] = {"score_threshold": self.similarity_threshold}
+
+            return self._vector_store.as_retriever(**retriever_kwargs)
 
         if retriever_type == "bm25":
+            # BM25 requires documents loaded from data directory
             if documents is None:
                 documents = self._load_all_documents()
             if not documents:

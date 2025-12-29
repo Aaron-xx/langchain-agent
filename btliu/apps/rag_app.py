@@ -1,4 +1,8 @@
-"""RAG application with agent management."""
+"""RAG application with agent management.
+
+This module provides the RAGApp class for streaming RAG query execution
+through LangGraph agents.
+"""
 
 from typing import Any, AsyncGenerator
 
@@ -7,10 +11,14 @@ from btliu.common import RuntimeContext
 
 
 class RAGApp:
-    """RAG application with agent management."""
+    """RAG application with agent management.
+
+    This class manages RAG agent initialization and provides streaming
+    query execution capabilities.
+    """
 
     def __init__(self, context: RuntimeContext) -> None:
-        """Initialize the application with runtime context.
+        """Initialize the RAG application.
 
         Args:
             context: Runtime context containing configuration and services
@@ -25,6 +33,9 @@ class RAGApp:
 
         Returns:
             RAG agent instance
+
+        Raises:
+            ValueError: If RAG agent is not found
         """
         agents, factory = await create_pre_agents(self.context)
         self.ragagent = agents.get("rag_agent")
@@ -37,16 +48,18 @@ class RAGApp:
         query: dict[str, Any],
         runtime: RuntimeContext | None = None,
         config: dict | None = None,
-    ) -> AsyncGenerator[str, None]:
+    ) -> AsyncGenerator[Any, None]:
         """Stream RAG query execution through agents.
 
         Args:
-            query: Query dictionary
-            runtime: Optional runtime context
+            query: Query dictionary with messages
+            runtime: Optional runtime context override (defaults to self.context)
             config: Optional LangGraph config (e.g., {"configurable": {"thread_id": "..."}})
 
         Yields:
-            Streamed content chunks
+            (token, metadata) tuples from the agent stream
+            - token: Message object (AIMessageChunk, ToolMessage, etc.)
+            - metadata: Dictionary with langgraph_node, langgraph_step, etc.
         """
         if self.ragagent is None:
             await self.get_agent()
@@ -59,12 +72,12 @@ class RAGApp:
             if thread_id:
                 config = {"configurable": {"thread_id": thread_id}}
 
+        # Stream from agent in messages mode
+        # Returns (token, metadata) tuples - filtering handled by CLI layer
         async for chunk in self.ragagent.astream(
             query,
             context=context,
             config=config,
             stream_mode="messages",
         ):
-            token, metadata = chunk
-            if hasattr(token, "content") and token.content:
-                yield token.content
+            yield chunk
