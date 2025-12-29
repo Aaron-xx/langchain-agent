@@ -1,4 +1,5 @@
 """Common utilities and types"""
+
 from .types import (
     DocumentChunk,
     RuntimeContext,

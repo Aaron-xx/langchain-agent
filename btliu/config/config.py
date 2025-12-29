@@ -39,6 +39,7 @@ else:
     # Fallback to default behavior if paths not available
     load_dotenv()
 
+
 # Configure logging
 def get_log_level() -> int:
     """Get log level from environment variable.
@@ -170,6 +171,7 @@ class Config:
             Object with environment variables replaced
         """
         if isinstance(obj, str):
+
             def replacer(match: re.Match[str]) -> str:
                 expr = match.group(1)
                 if ":-" in expr:
@@ -267,16 +269,10 @@ class Config:
             Dictionary of matching configurations
         """
         prefix_with_dot = f"{prefix}."
-        result = {
-            k: v for k, v in self._index.items()
-            if k.startswith(prefix_with_dot)
-        }
+        result = {k: v for k, v in self._index.items() if k.startswith(prefix_with_dot)}
 
         # Remove prefix, keep only relative path
-        result = {
-            k[len(prefix_with_dot):]: v
-            for k, v in result.items()
-        }
+        result = {k[len(prefix_with_dot) :]: v for k, v in result.items()}
 
         logger.debug(f"Get config group: {prefix} → {len(result)} items")
         return result
@@ -308,10 +304,7 @@ class Config:
             Dictionary of matching configurations
         """
         pattern = pattern.lower()
-        result = {
-            k: v for k, v in self._index.items()
-            if pattern in k.lower()
-        }
+        result = {k: v for k, v in self._index.items() if pattern in k.lower()}
 
         logger.info(f"Search '{pattern}' found {len(result)} results")
         return result
@@ -359,11 +352,7 @@ class Config:
         params.pop("provider", None)
 
         # Create model using LangChain's init_chat_model
-        model = init_chat_model(
-            model=model_name,
-            model_provider=provider,
-            **params
-        )
+        model = init_chat_model(model=model_name, model_provider=provider, **params)
 
         # Cache
         self._model_cache[cache_key] = model
@@ -399,11 +388,7 @@ class Config:
         params.pop("provider", None)
 
         # Create model using LangChain's init_embeddings
-        model = init_embeddings(
-            model=model_name,
-            provider=provider,
-            **params
-        )
+        model = init_embeddings(model=model_name, provider=provider, **params)
 
         # Cache
         self._model_cache[cache_key] = model
@@ -477,7 +462,11 @@ class Config:
             # Skip comment keys (starting with #)
             if key.startswith("#"):
                 continue
-            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            if (
+                key in result
+                and isinstance(result[key], dict)
+                and isinstance(value, dict)
+            ):
                 result[key] = self._deep_merge(result[key], value)
             else:
                 result[key] = value

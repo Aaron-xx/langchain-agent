@@ -26,7 +26,13 @@ from langchain_core.documents import Document
 from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
+from qdrant_client.models import (
+    Distance,
+    VectorParams,
+    Filter,
+    FieldCondition,
+    MatchValue,
+)
 
 # Import paths module for multi-tier data directory support
 try:
@@ -85,11 +91,15 @@ class DocumentManager:
         # - Qdrant uses distance: 0.0 = identical, 1.0 = unrelated
         # - Converted to relevance score by LangChain: 1.0 - distance
         # - Set to None to disable threshold filtering
-        self.similarity_threshold = config.get("vector_store.similarity_threshold", None)
+        self.similarity_threshold = config.get(
+            "vector_store.similarity_threshold", None
+        )
         self.max_retrieved_docs = config.get("vector_store.max_retrieved_docs", 4)
 
         # Hash index with multi-tier support
-        hash_index_config = config.get("document_processing.hash_index_file", "./data/.hash_index.json")
+        hash_index_config = config.get(
+            "document_processing.hash_index_file", "./data/.hash_index.json"
+        )
         self.hash_index = Path(hash_index_config).expanduser()
 
         # Ensure hash index directory exists
@@ -159,7 +169,7 @@ class DocumentManager:
 
             # Clean text content to remove invalid Unicode characters and noise
             for doc in docs:
-                if hasattr(doc, 'page_content'):
+                if hasattr(doc, "page_content"):
                     doc.page_content = self._clean_text(doc.page_content)
 
             # Add source metadata if not present
@@ -222,21 +232,21 @@ class DocumentManager:
             Cleaned text with only valid UTF-8 characters
         """
         # Remove surrogate pairs (invalid UTF-16 surrogates in UTF-8)
-        text = re.sub(r'[\ud800-\udfff]', '', text)
+        text = re.sub(r"[\ud800-\udfff]", "", text)
 
         # Remove other non-printable/control characters (except common whitespace)
-        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+        text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]", "", text)
 
         # Remove emojis and other symbols that cause encoding issues
-        text = re.sub(r'[\U0001f300-\U0001f9ff]', '', text)  # emojis
-        text = re.sub(r'[\U00002600-\U000027bf]', '', text)   # misc symbols
-        text = re.sub(r'[\U0001f000-\U0001f02f]', '', text)  # additional symbols
+        text = re.sub(r"[\U0001f300-\U0001f9ff]", "", text)  # emojis
+        text = re.sub(r"[\U00002600-\U000027bf]", "", text)  # misc symbols
+        text = re.sub(r"[\U0001f000-\U0001f02f]", "", text)  # additional symbols
 
         # Remove URLs
-        text = re.sub(r'http\S+', '', text)
+        text = re.sub(r"http\S+", "", text)
 
         # Normalize whitespace (remove extra spaces)
-        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r"\s+", " ", text)
 
         return text.strip()
 
@@ -312,8 +322,7 @@ class DocumentManager:
             filter_obj = Filter(
                 must=[
                     FieldCondition(
-                        key="metadata.source",
-                        match=MatchValue(value=file_path)
+                        key="metadata.source", match=MatchValue(value=file_path)
                     )
                 ]
             )
@@ -452,7 +461,9 @@ class DocumentManager:
                 # search_type="similarity_score_threshold" filters by distance
                 # score_threshold is the maximum distance allowed
                 retriever_kwargs["search_type"] = "similarity_score_threshold"
-                retriever_kwargs["search_kwargs"] = {"score_threshold": self.similarity_threshold}
+                retriever_kwargs["search_kwargs"] = {
+                    "score_threshold": self.similarity_threshold
+                }
 
             return self._vector_store.as_retriever(**retriever_kwargs)
 

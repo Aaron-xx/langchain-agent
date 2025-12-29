@@ -166,6 +166,7 @@ def ensure_global_config() -> Path:
         # Copy from template
         if DEFAULT_CONFIG_TEMPLATE.exists():
             import shutil
+
             shutil.copy(DEFAULT_CONFIG_TEMPLATE, global_config)
         else:
             # Create minimal default config
@@ -177,30 +178,30 @@ def ensure_global_config() -> Path:
                         "openai": {
                             "provider": "openai",
                             "model": "gpt-3.5-turbo",
-                            "api_key": "${OPENAI_API_KEY:-}"
+                            "api_key": "${OPENAI_API_KEY:-}",
                         }
                     },
                     "embedding": {
                         "ollama": {
                             "provider": "ollama",
                             "model": "bge-m3:latest",
-                            "base_url": "http://localhost:11434"
+                            "base_url": "http://localhost:11434",
                         }
-                    }
+                    },
                 },
                 "vector_store": {
                     "qdrant_url": "http://localhost:6333",
-                    "collection_name": "btliu_documents"
+                    "collection_name": "btliu_documents",
                 },
                 "document_processing": {
                     "data_dir": "~/.btliu/data/documents",
                     "chunk_size": 1000,
                     "chunk_overlap": 200,
-                    "hash_index_file": "~/.btliu/data/.hash_index.json"
-                }
+                    "hash_index_file": "~/.btliu/data/.hash_index.json",
+                },
             }
 
-            with open(global_config, 'w') as f:
+            with open(global_config, "w") as f:
                 json.dump(default_config, f, indent=2)
 
     return global_config
@@ -223,12 +224,10 @@ def init_project_config() -> Path:
         # Start with minimal config that extends global
         config = {
             "#": "Project-specific configuration overrides - uncomment values to override global settings",
-            "document_processing": {
-                "data_dir": "./.btliu/data/documents"
-            }
+            "document_processing": {"data_dir": "./.btliu/data/documents"},
         }
 
-        with open(project_config, 'w') as f:
+        with open(project_config, "w") as f:
             json.dump(config, f, indent=2)
 
     return project_config

@@ -1,6 +1,7 @@
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from btliu.config import get_config
 
+
 async def get_mcp_tools():
     """获取所有MCP工具的核心函数"""
     # 从配置读取MCP服务器配置
