@@ -109,10 +109,21 @@ class AgentFactory:
                     )
                 )
             elif name == "summarization":
+                # 从 profile 读取容量（config.py 中设置的）
+                max_tokens = None
+                if hasattr(self.llm, "profile") and self.llm.profile:
+                    max_tokens = self.llm.profile.get("max_input_tokens")
+
+                fallback_tokens = int(max_tokens * 0.9) if max_tokens else 8000
+
                 middleware.append(
                     SummarizationMiddleware(
                         model=self.llm,
-                        trigger=("tokens", 4000),
+                        trigger=[
+                            ("fraction", 0.9),
+                            ("tokens", fallback_tokens),
+                            ("messages", 50),
+                        ],
                         keep=("messages", 10),
                         summary_prompt="请将以下对话历史进行摘要，保留关键决策点和技术细节：\n\n{messages}\n\n摘要:",
                     )

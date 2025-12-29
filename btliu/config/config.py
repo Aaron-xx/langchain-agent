@@ -351,6 +351,10 @@ class Config:
         model_name = params.pop("model")
         params.pop("provider", None)
 
+        max_tokens = params.pop("max_input_tokens", None)
+        if max_tokens:
+            params["profile"] = {"max_input_tokens": max_tokens}
+
         # Create model using LangChain's init_chat_model
         model = init_chat_model(model=model_name, model_provider=provider, **params)
 
