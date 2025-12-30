@@ -1,11 +1,8 @@
 """Cross-thread memory tools using LangGraph's ToolRuntime injection.
 
-IMPORTANT: This module uses tool_runtime.store (injected by LangGraph) instead of
-context.get("store") to avoid including unpicklable AsyncPostgresStore in the
-agent context. See cli.py WORKAROUND for full context.
-
-The Store is injected by LangGraph via ToolRuntime when tools are called,
-not stored in the RuntimeContext passed to agent creation.
+The Store is injected by LangGraph via ToolRuntime when tools are called.
+This module uses tool_runtime.store instead of context.get("store") because
+the store is runtime-injected by LangGraph, not statically stored in context.
 """
 
 import time

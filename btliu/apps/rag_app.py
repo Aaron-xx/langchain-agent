@@ -21,18 +21,15 @@ class RAGApp:
         self,
         context: RuntimeContext,
         store: Any = None,
-        checkpointer: Any = None,
     ) -> None:
         """Initialize the RAG application.
 
         Args:
             context: Runtime context containing configuration and services
             store: Optional store instance (for cross-thread memory)
-            checkpointer: Optional checkpointer instance (for persistence)
         """
         self.context = context
         self.store = store
-        self.checkpointer = checkpointer
         self.agents: dict[str, Any] | None = None
         self.factory: Any | None = None
         self.ragagent: Any | None = None
@@ -46,9 +43,7 @@ class RAGApp:
         Raises:
             ValueError: If RAG agent is not found
         """
-        agents, factory = await create_pre_agents(
-            self.context, store=self.store, checkpointer=self.checkpointer
-        )
+        agents, factory = await create_pre_agents(self.context, store=self.store)
         self.ragagent = agents.get("rag_agent")
         if self.ragagent is None:
             raise ValueError("RAG agent not found")

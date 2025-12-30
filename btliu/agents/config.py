@@ -21,7 +21,6 @@ class AgentConfig:
     tools: list[str] | None = None
     middleware: list[str] | None = None
     store: Any | None = None
-    checkpointer: Any | None = None
 
     def __post_init__(self) -> None:
         if self.tools is None:
@@ -80,10 +79,10 @@ PRESETS: dict[str, AgentConfig] = {
             "tool_retry",
             "pii_masking",
             "filesystem",
-            "filesystemfilesearch",
+            # "filesystemfilesearch",
             "human_in_loop",
             "summarization",
-            "bash",
+            # "bash",
         ],
     ),
 }

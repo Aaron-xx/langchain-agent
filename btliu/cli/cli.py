@@ -79,6 +79,7 @@ class CLIApplication:
         self._init_future: Optional[Any] = None
         self._doc_monitor: Optional[Any] = None
         self._db_pool: Optional[Any] = None
+        self._store: Optional[Any] = None
 
         # CLI state
         self.mode: str = "ucagent"
@@ -122,7 +123,6 @@ class CLIApplication:
         context = RuntimeContext(
             config=config,
             doc_manager=doc_manager,
-            checkpointer=None,  # Deferred init
             store=None,  # Deferred init
             thread_id=str(uuid.uuid4()),
         )
@@ -145,7 +145,7 @@ class CLIApplication:
         return self._context
 
     async def initialize_database(self) -> None:
-        """Initialize database connection pool and related components.
+        """Initialize database connection pool and store.
 
         This must be called from within an async event loop.
         Only runs once (self._db_pool check).
@@ -155,14 +155,12 @@ class CLIApplication:
 
         context = self.ensure_context()
         config = context.get("config")
-        db_uri = config.get("checkpoint_db_uri", None) if config else None
+        db_uri = config.get("postgresql_uri", None) if config else None
 
         if not db_uri:
             return
 
         from psycopg_pool import AsyncConnectionPool
-        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer, _msgpack_enc
         from langgraph.store.postgres.aio import AsyncPostgresStore
 
         self._db_pool = AsyncConnectionPool(
@@ -170,119 +168,12 @@ class CLIApplication:
         )
         await self._db_pool.open()
 
-        # ============================================================================
-        # WORKAROUND: LangGraph Middleware Serialization Issue
-        # ============================================================================
-        #
-        # === PROBLEM ===
-        # LangGraph 的设计哲学是"完整状态持久化"，它会将所有中间写入（包括
-        # middleware 实例）保存到 checkpoint。但某些 middleware 包含无法序列化
-        # 的组件：
-        #
-        #   - SummarizationMiddleware: 包含 LLM (带有 threading._lock)
-        #   - FilesystemFileSearchMiddleware: 包含复杂的工具引用
-        #   - ShellToolMiddleware: 包含文件句柄/连接
-        #   - FilesystemMiddleware: 包含 lambda 函数
-        #   - _SessionResources: LangGraph 内部会话对象
-        #
-        # === WHY NOT __getstate__ PROXY? ===
-        # 更优雅的方案是用 __getstate__/__setstate__ 代理来控制序列化。
-        # 但 LangGraph 的 create_agent() 会直接检查类属性（如 m.__class__.wrap_tool_call），
-        # 这绕过了 __getattr__，需要复杂的类属性转发，比当前运行时过滤方案更脆弱。
-        #
-        # === SOLUTION ===
-        # 在序列化时过滤掉无法 pickle 的对象。Middleware 会在每次运行时重新创建
-        # （见 factory.py），所以从 checkpoint 中丢失它们是可接受的。
-        #
-        # === ALTERNATIVES CONSIDERED ===
-        # 1. __getstate__ 代理: 因 LangGraph 的类属性检查而变得复杂
-        # 2. InMemoryStore checkpointer: 失去跨会话持久化
-        # 3. 移除有问题的 middleware: 失去功能
-        # 4. 当前方案: 简单、集中、可靠
-        #
-        # === STATUS: WAITING FOR UPSTREAM FIX ===
-        # Related Issues:
-        # - https://github.com/langchain-ai/langgraph/issues/5769
-        # - https://github.com/langchain-ai/langgraph/issues/5077
-        # - https://github.com/langchain-ai/langgraph/issues/2755
-        #
-        # TODO: 当上游提供官方解决方案后，移除此自定义序列化器
-        # ============================================================================
-        import pickle
-        import ormsgpack
-
-        # Middleware class names that cannot be pickled
-        _UNPICKLABLE_TYPES = {
-            "SummarizationMiddleware",  # contains LLM with threading._lock
-            "FilesystemFileSearchMiddleware",  # contains tool references
-            "ShellToolMiddleware",  # contains file handles
-            "FilesystemMiddleware",  # contains lambda functions
-            "_SessionResources",  # internal LangGraph object
-        }
-
-        def _filter_unpicklable(obj):
-            """Recursively remove unpicklable objects from state."""
-            if hasattr(obj, "__class__"):
-                cls_name = obj.__class__.__name__
-                # Handle LangGraph Send objects (parallel routing)
-                if cls_name == "Send":
-                    if hasattr(obj, "node") and hasattr(obj, "arg"):
-                        return {
-                            "__send__": True,
-                            "node": obj.node,
-                            "arg": _filter_unpicklable(obj.arg),
-                        }
-                    return obj
-                # Filter out unpicklable middleware
-                if cls_name in _UNPICKLABLE_TYPES:
-                    return None
-
-            if isinstance(obj, dict):
-                return {k: _filter_unpicklable(v) for k, v in obj.items()}
-            if isinstance(obj, list):
-                return [_filter_unpicklable(item) for item in obj]
-            if isinstance(obj, tuple):
-                return tuple(_filter_unpicklable(item) for item in obj)
-            return obj
-
-        class _CustomJsonPlusSerializer(JsonPlusSerializer):
-            """Custom serializer that filters unpicklable middleware before encoding."""
-
-            # Must match parent module for pickle compatibility
-            __module__ = "langgraph.checkpoint.serde.jsonplus"
-
-            def dumps_typed(self, obj):
-                """Encode object, filtering unpicklable middleware first."""
-                if obj is None:
-                    return ("null", b"")
-                if isinstance(obj, bytes):
-                    return ("bytes", obj)
-                if isinstance(obj, bytearray):
-                    return ("bytearray", obj)
-
-                # Filter out unpicklable middleware, then serialize
-                filtered = _filter_unpicklable(obj)
-                try:
-                    return (
-                        "msgpack",
-                        _msgpack_enc(filtered if filtered is not None else obj),
-                    )
-                except (ormsgpack.MsgpackEncodeError, TypeError) as exc:
-                    if self.pickle_fallback:
-                        return (
-                            "pickle",
-                            pickle.dumps(filtered if filtered is not None else obj),
-                        )
-                    raise exc
-
-        serde = _CustomJsonPlusSerializer(pickle_fallback=True)
         self._store = AsyncPostgresStore(self._db_pool)
-        self._checkpointer = AsyncPostgresSaver(self._db_pool, serde=serde)
+        context["store"] = self._store
 
         # Run setup to create tables
         try:
             await self._store.setup()
-            await self._checkpointer.setup()
             print_formatted_text(ANSI("\x1b[32m✓ Database initialized\x1b[0m\n"))
         except Exception as e:
             print_formatted_text(
@@ -385,15 +276,11 @@ class CLIApplication:
             if self.mode == "ucagent":
                 from btliu.apps.ucagent_app import UcagentApp
 
-                app = UcagentApp(
-                    context, store=self._store, checkpointer=self._checkpointer
-                )
+                app = UcagentApp(context, store=self._store)
             else:  # rag or default
                 from btliu.apps.rag_app import RAGApp
 
-                app = RAGApp(
-                    context, store=self._store, checkpointer=self._checkpointer
-                )
+                app = RAGApp(context, store=self._store)
 
             await self.stream_output(app, payload)
             print("\n")

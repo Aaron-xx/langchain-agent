@@ -3,7 +3,6 @@
 from typing import Any, Callable
 
 from deepagents.backends import (
-    CompositeBackend,
     FilesystemBackend,
     StateBackend,
     StoreBackend,
@@ -31,8 +30,8 @@ class AgentFactory:
     """Factory for creating configured agents with tools and middleware.
 
     NOTE: Middleware are created fresh on each agent creation (not cached).
-    This is required because unpicklable middleware are filtered from checkpoint
-    state by the custom serializer in btliu/cli/cli.py (see WORKAROUND comment).
+    This is required because middleware contain unpicklable components that
+    should not be persisted to checkpoint.
     """
 
     def __init__(
@@ -40,7 +39,6 @@ class AgentFactory:
         llm: Any,
         tools_dict: dict[str, list],
         store: Any | None = None,
-        checkpointer: Any | None = None,
         filesystem_root: str = "/tmp/agent_workspace",
     ) -> None:
         """Initialize the agent factory.
@@ -54,7 +52,6 @@ class AgentFactory:
         self.llm = llm
         self.tools_dict = tools_dict  # {"retrieval": [...], "mcp": [...]}
         self.store = store or InMemoryStore()
-        self.checkpointer = checkpointer
         self.filesystem_root = filesystem_root
 
     def _get_tools(self, tool_names: list[str]) -> list:
@@ -96,16 +93,10 @@ class AgentFactory:
             elif name == "filesystem":
                 middleware.append(
                     FilesystemMiddleware(
-                        backend=lambda rt: CompositeBackend(
-                            default=StateBackend(rt),
-                            routes={
-                                "/memories/": StoreBackend(rt),
-                                "/workspace/": FilesystemBackend(
-                                    root_dir=self.filesystem_root,
-                                    virtual_mode=True,
-                                ),
-                            },
-                        )
+                        backend=FilesystemBackend(
+                            root_dir=self.filesystem_root,
+                            virtual_mode=True,  # Sandbox paths under root_dir
+                        ),
                     )
                 )
             elif name == "summarization":
@@ -161,7 +152,6 @@ class AgentFactory:
             tools=tools,
             middleware=[config.prompt_fn] + middleware,
             store=self.store,
-            checkpointer=self.checkpointer,
             context_schema=RuntimeContext,
         )
 
@@ -205,7 +195,6 @@ class AgentFactory:
             prompt_fn=prompt_fn,
             tools=tool_names or [],
             middleware=middleware_names or [],
-            checkpointer=self.checkpointer,
             store=self.store,
         )
         return self.create(config)

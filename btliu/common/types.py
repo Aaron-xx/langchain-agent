@@ -34,7 +34,6 @@ class RuntimeContext(TypedDict, total=False):
     Attributes:
         config: Configuration instance
         doc_manager: Document manager instance
-        checkpointer: LangGraph checkpointer for session persistence
         store: LangGraph store for cross-thread memory
         thread_id: Current session thread ID
         user_id: User identifier for cross-thread memory isolation
@@ -42,7 +41,5 @@ class RuntimeContext(TypedDict, total=False):
 
     config: "Config"
     doc_manager: "DocumentManager"
-    checkpointer: Any
-    store: Any
     thread_id: str
     user_id: str

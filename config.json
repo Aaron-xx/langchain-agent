@@ -1,7 +1,7 @@
 {
   "log_level": "WARNING",
   "environment_type": "external",
-  "checkpoint_db_uri": "postgresql://langchain:langchain_postgres@postgres:5432/langchain",
+  "postgresql_uri": "postgresql://langchain:langchain_postgres@postgres:5432/langchain",
   "models": {
     "chat": {
       "openai": {
