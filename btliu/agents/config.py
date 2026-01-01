@@ -31,40 +31,12 @@ class AgentConfig:
 
 # Import all prompt functions
 from btliu.agents.dynamic_prompts import (
-    analysis_prompt_with_context,
-    decision_prompt_with_context,
-    execution_prompt_with_context,
-    planning_prompt_with_context,
     rag_prompt_with_context,
     ucagent_prompt_with_context,
 )
 
 # Preset configurations - directly reference prompt functions
 PRESETS: dict[str, AgentConfig] = {
-    "decision": AgentConfig(
-        name="decision_agent",
-        prompt_fn=decision_prompt_with_context,
-        tools=[],
-        middleware=["human_in_loop", "tool_retry"],
-    ),
-    "analysis": AgentConfig(
-        name="analysis_agent",
-        prompt_fn=analysis_prompt_with_context,
-        tools=["retrieval"],
-        middleware=["tool_retry", "pii_masking"],
-    ),
-    "planning": AgentConfig(
-        name="planning_agent",
-        prompt_fn=planning_prompt_with_context,
-        tools=[],
-        middleware=["tool_retry", "model_call_limit"],
-    ),
-    "execution": AgentConfig(
-        name="execution_agent",
-        prompt_fn=execution_prompt_with_context,
-        tools=["retrieval", "mcp"],
-        middleware=["tool_retry", "model_call_limit"],
-    ),
     "rag_agent": AgentConfig(
         name="rag_agent",
         prompt_fn=rag_prompt_with_context,
