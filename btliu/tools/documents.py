@@ -34,6 +34,8 @@ from qdrant_client.models import (
     MatchValue,
 )
 
+from btliu.config.paths import get_process_hash_index
+
 # Import paths module for multi-tier data directory support
 try:
     from ..config import paths
@@ -66,7 +68,7 @@ class DocumentManager:
             config: Configuration object with access methods:
                 - vector_store.qdrant_url: Qdrant server URL (default: :memory:)
                 - vector_store.collection_name: Collection name
-                - vector_store.similarity_threshold: Cosine distance threshold (default: None)
+                - vector_store.similarity_threshold: Cosine threshold (default: None)
                 - vector_store.max_retrieved_docs: Max docs to return (default: 4)
                 - document_processing.chunk_size: Text chunk size (default: 1000)
                 - document_processing.chunk_overlap: Chunk overlap (default: 200)
@@ -80,6 +82,7 @@ class DocumentManager:
 
         # Use paths module for global documents directory
         self.data_dir = paths.get_documents_dir()
+        self.hash_index = get_process_hash_index()
 
         # Document processing configuration
         self.chunk_size = config.get("document_processing.chunk_size", 1000)
@@ -94,16 +97,7 @@ class DocumentManager:
         self.similarity_threshold = config.get(
             "vector_store.similarity_threshold", None
         )
-        self.max_retrieved_docs = config.get("vector_store.max_retrieved_docs", 4)
-
-        # Hash index with multi-tier support
-        hash_index_config = config.get(
-            "document_processing.hash_index_file", "./data/.hash_index.json"
-        )
-        self.hash_index = Path(hash_index_config).expanduser()
-
-        # Ensure hash index directory exists
-        self.hash_index.parent.mkdir(parents=True, exist_ok=True)
+        self.default_k = config.get("retrieval.default_k", 6)
 
         # Initialize Qdrant client
         qdrant_url = config.get("vector_store.qdrant_url", ":memory:")
@@ -318,6 +312,8 @@ class DocumentManager:
         Returns:
             bool: True if deletion was successful, False otherwise
         """
+        logger.info(f"→ Deleting: {file_path}", extra={"color": "info"})
+
         try:
             filter_obj = Filter(
                 must=[
@@ -332,10 +328,22 @@ class DocumentManager:
                 points_selector=filter_obj,
             )
 
-            logger.info(f"Deleted documents for source: {file_path}")
+            # Remove from hash index
+            if self.hash_index.exists():
+                try:
+                    with open(self.hash_index) as f:
+                        hashes = json.load(f)
+                    if file_path in hashes:
+                        del hashes[file_path]
+                        with open(self.hash_index, "w") as f:
+                            json.dump(hashes, f, indent=2)
+                except (json.JSONDecodeError, IOError) as e:
+                    logger.warning(f"Failed to update hash index: {e}")
+
+            logger.info(f"✓ Deleted: {file_path}", extra={"color": "success"})
             return True
         except Exception as e:
-            logger.error(f"Failed to delete documents for {file_path}: {e}")
+            logger.error(f"✗ Failed to delete: {file_path}", extra={"color": "error"})
             return False
 
     def reindex(self, documents: list[Document] | None = None) -> None:
@@ -379,32 +387,41 @@ class DocumentManager:
         Args:
             documents: Optional list of documents. If None, loads from data_dir
         """
+        logger.info("→ Adding documents to vector store...", extra={"color": "info"})
+
         if documents is None:
             # Use smart index to detect new/modified files
             has_changed, added_files, _ = self._smart_index()
             if not has_changed or not added_files:
-                logger.info("Documents unchanged, skipping update")
+                logger.info(
+                    "→ No document changes detected", extra={"color": "warning"}
+                )
                 return
 
             # Process only new/modified files
             for file_path in added_files:
+                logger.info(f"  Processing: {file_path}", extra={"color": "info"})
                 docs = self._load_document(file_path)
                 if docs:
                     split_docs = self._split_documents(docs)
                     self._vector_store.add_documents(split_docs)
-            logger.info(f"Processed {len(added_files)} changed files")
+            logger.info(
+                f"✓ Added {len(added_files)} documents", extra={"color": "success"}
+            )
             return
 
         # Original logic: process provided documents
         if not documents:
-            logger.warning("No documents to add")
+            logger.warning("! No documents to add", extra={"color": "warning"})
             return
 
         # Split and add documents
         split_docs = self._split_documents(documents)
         self._vector_store.add_documents(split_docs)
 
-        logger.info(f"Added {len(split_docs)} document chunks")
+        logger.info(
+            f"✓ Added {len(split_docs)} document chunks", extra={"color": "success"}
+        )
 
     def get_stats(self) -> dict[str, Any]:
         """Get collection statistics.
@@ -433,7 +450,7 @@ class DocumentManager:
             retriever_type: Type of retriever ("basic" or "bm25")
                 - "basic": Vector similarity search with optional threshold filtering
                 - "bm25": BM25 keyword-based search
-            k: Number of documents to retrieve (default: use max_retrieved_docs from config)
+            k: Number of docs to retrieve (default: max_retrieved_docs from config)
             documents: Required for BM25 retriever (loaded from data dir if None)
 
         Returns:
@@ -451,7 +468,7 @@ class DocumentManager:
         if retriever_type == "basic":
             # Use configured k if not provided
             if k is None:
-                k = self.max_retrieved_docs
+                k = self.default_k
 
             # Build retriever kwargs
             retriever_kwargs = {"k": k}

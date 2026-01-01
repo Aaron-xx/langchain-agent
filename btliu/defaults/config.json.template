@@ -36,22 +36,14 @@
     "vector_store": {
         "qdrant_url": "http://qdrant:6333",
         "collection_name": "rag_documents",
-        "similarity_threshold": 0.70,
-        "max_retrieved_docs": 4,
-        "enable_caching": true,
-        "cache_ttl": 3600,
+        "similarity_threshold": 0.60,
     },
     "document_processing": {
         "chunk_size": 1000,
         "chunk_overlap": 200,
-        "enable_smart_index": true,
     },
     "retrieval": {
-        "default_k": 5,
-        "compression_threshold": 0.7,
-        "multi_query_enabled": true,
-        "cache_enabled": true,
-        "cache_ttl": 3600,
+        "default_k": 8,
     },
     "mcp_servers": {
         "ucagent": {
@@ -66,6 +58,12 @@
         "batch_size": 10,
         "max_retries": 3,
         "log_events": true,
-        "ignore_patterns": ["*.tmp", "*.swp", "~*", ".DS_Store", "*.bak"],
-    },
+        "ignore_patterns": [
+        "*.tmp",
+        "*.swp",
+        "~*",
+        ".DS_Store",
+        "*.bak"
+        ]
+    }
 }

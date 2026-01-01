@@ -33,6 +33,28 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
+# COLOR FORMATTER
+# ============================================================================
+
+
+class ColorFormatter(logging.Formatter):
+    """Formatter that adds ANSI colors based on log record 'color' field."""
+
+    COLORS = {
+        "success": "\x1b[32m",  # Green
+        "error": "\x1b[31m",  # Red
+        "info": "\x1b[36m",  # Cyan
+        "warning": "\x1b[33m",  # Yellow
+    }
+
+    def format(self, record):
+        color = self.COLORS.get(getattr(record, "color", ""), "")
+        reset = "\x1b[0m" if color else ""
+        msg = record.getMessage()
+        return f"{color}{msg}{reset}"
+
+
+# ============================================================================
 # COMPLETER
 # ============================================================================
 
@@ -41,7 +63,16 @@ class CLIDynamicCompleter(Completer):
     """Dynamic command completer for CLI commands."""
 
     def get_completions(self, document, complete_event):
-        cmds = ["/ucagent", "/rag", "/save", "/restore", "/exit", "/help"]
+        cmds = [
+            "/ucagent",
+            "/rag",
+            "/save",
+            "/restore",
+            "/reindex",
+            "/exit",
+            "/help",
+            "/mcp",
+        ]
         for w in cmds:
             if w.startswith(document.text):
                 yield Completion(w, start_position=-len(document.text))
@@ -180,6 +211,64 @@ class CLIApplication:
                 ANSI(f"\x1b[33m! Database setup skipped: {e}\x1b[0m\n")
             )
 
+    async def _show_mcp_status(self) -> None:
+        """Show MCP connection status."""
+        print_formatted_text(ANSI("\x1b[36mChecking MCP status...\x1b[0m"))
+
+        try:
+            from btliu.tools import get_mcp_tools
+
+            tools = await get_mcp_tools(verbose=False)
+            if tools:
+                print_formatted_text(
+                    ANSI(f"\x1b[32m✓ MCP connected: {len(tools)} tools\x1b[0m\n")
+                )
+            else:
+                print_formatted_text(
+                    ANSI(f"\x1b[33m! MCP: No tools available\x1b[0m\n")
+                )
+        except Exception as e:
+            print_formatted_text(ANSI(f"\x1b[31m✗ MCP connection failed: {e}\x1b[0m\n"))
+
+    async def _reindex_documents(self) -> None:
+        """Force reindex all documents."""
+        context = self.ensure_context()
+        doc_manager = context.get("doc_manager")
+
+        print_formatted_text(ANSI("\x1b[36mReindexing documents...\x1b[0m"))
+
+        try:
+            doc_manager.reindex()
+            stats = doc_manager.get_stats()
+            print_formatted_text(
+                ANSI(
+                    f"\x1b[32m✓ Reindexed: {stats['document_count']} documents\x1b[0m\n"
+                )
+            )
+        except Exception as e:
+            print_formatted_text(ANSI(f"\x1b[31m✗ Reindex failed: {e}\x1b[0m\n"))
+
+    def _setup_status_logging(self) -> None:
+        """Setup colored logging for status messages from tools."""
+        handler = logging.StreamHandler()
+        handler.setFormatter(ColorFormatter())
+
+        # Only capture logs with 'color' attribute
+        def filter_with_color(record):
+            return hasattr(record, "color")
+
+        handler.addFilter(filter_with_color)
+
+        tools_logger = logging.getLogger("btliu.tools")
+        # Avoid adding duplicate handlers
+        if not any(
+            isinstance(h, logging.StreamHandler) and hasattr(h.formatter, "COLORS")
+            for h in tools_logger.handlers
+        ):
+            tools_logger.addHandler(handler)
+        tools_logger.setLevel(logging.INFO)
+        tools_logger.propagate = False  # 不传播到 root logger
+
     # ========================================================================
     # RESOURCE CLEANUP
     # ========================================================================
@@ -223,41 +312,28 @@ class CLIApplication:
             Handles (token, metadata) tuples from LangGraph stream_mode="messages"
             and filters message types based on MESSAGE_TYPE_FILTER config.
         """
-        # Message type filter configuration: True=show, False=hide
-        # Based on LangChain/LangGraph message types from official documentation
-        MESSAGE_TYPE_FILTER = {
-            # Standard LangChain message types
-            "ai": True,  # AIMessage - AI complete response
-            "AIMessageChunk": True,  # AIMessageChunk - AI streaming tokens
-            "assistant": True,  # Generic assistant message
-            "tool": False,  # ToolMessage - tool results (hidden)
-            "human": False,  # HumanMessage - user input (hidden)
-            "system": False,  # SystemMessage - system prompt (hidden)
-            "reasoning": False,  # Reasoning messages (hidden by default)
-            # Extension interface for future message types:
-            # "thinking": False,     # Thinking content blocks
-            # "generic": False,      # Generic messages
-        }
-
         async for token in app.astream(payload):
             # Signal spinner to stop: first AI token has arrived
             if not self.first_token_received:
                 self.first_token_received = True
             async with self.stdout_lock:
-                # LangGraph stream_mode="messages" yields three possible formats:
-                # - (Message, metadata): Message object with metadata (handle with filter)
+                # LangGraph stream_mode="messages" yields three formats:
+                # - (Message, metadata): Message object with metadata
                 # - str: Plain text string (write directly)
                 # - list: Metadata list (skip)
                 if isinstance(token, tuple) and len(token) == 2:
                     msg, metadata = token
                     msg_type = getattr(msg, "type", None)
-                    if (
-                        msg_type in MESSAGE_TYPE_FILTER
-                        and MESSAGE_TYPE_FILTER[msg_type]
-                    ):
+                    if msg_type in {"ai", "AIMessageChunk", "assistant"}:
                         content = getattr(msg, "content", None)
                         if content:
                             sys.stdout.write(content)
+                    if msg_type in {"tool", "reasoning"}:
+                        content = getattr(msg, "content", None)
+                        if content:
+                            sys.stdout.write("[Tool or Think] ")
+                            sys.stdout.write(content)
+
                 elif isinstance(token, str):
                     sys.stdout.write(token)
                 elif isinstance(token, list):
@@ -344,10 +420,19 @@ class CLIApplication:
         if cmd in ("exit", "quit"):
             return False  # Signal to exit
 
+        if cmd == "reindex":
+            await self._reindex_documents()
+            return True
+
+        if cmd == "mcp":
+            await self._show_mcp_status()
+            return True
+
         if cmd == "help":
             print_formatted_text(
                 ANSI(
-                    "\x1b[36mCommands: /ucagent /rag /save /restore /exit /help\x1b[0m"
+                    "\x1b[36mCommands: /ucagent /rag /save /restore "
+                    "/reindex /mcp /exit /help\x1b[0m"
                 )
             )
             return True
@@ -362,8 +447,12 @@ class CLIApplication:
     async def run(self) -> None:
         """Main CLI entry point with instant startup."""
         self.start_background_init()
+        self._setup_status_logging()
 
-        print("CLI ready  /ucagent  /rag  /save /restore /help /exit  Ctrl+C cancel\n")
+        print(
+            "CLI ready  /ucagent  /rag  /save /restore "
+            "/reindex /mcp /help /exit  Ctrl+C cancel\n"
+        )
 
         if paths_module is not None:
             try:

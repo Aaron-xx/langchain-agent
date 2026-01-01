@@ -102,6 +102,12 @@ class DocumentUpdateQueue:
     def _process_pending(self):
         """Process all pending file changes."""
         with self._lock:
+            # Check if hash index exists, if not trigger initial indexing
+            if not self.doc_manager.hash_index.exists():
+                logger.info("Hash index not found, triggering initial indexing...")
+                self.doc_manager.add_documents()
+                return
+
             if not self._created_files and not self._deleted_files:
                 return
 
