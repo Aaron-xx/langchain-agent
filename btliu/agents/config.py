@@ -50,11 +50,9 @@ PRESETS: dict[str, AgentConfig] = {
         middleware=[
             "tool_retry",
             "pii_masking",
-            "filesystem",
-            # "filesystemfilesearch",
+            # "filesystem",
             "human_in_loop",
             "summarization",
-            # "bash",
         ],
     ),
 }
