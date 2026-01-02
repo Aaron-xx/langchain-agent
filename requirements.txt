@@ -76,6 +76,7 @@ rich>=13.7.0
 # 工具库 - 最新版本
 click>=8.1.7
 pyyaml>=6.0.2
+pygments>=2.18.0
 
 # 文件系统监控
 watchdog>=3.0.0
