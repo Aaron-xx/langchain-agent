@@ -301,6 +301,123 @@ class CLIApplication:
     # QUERY EXECUTION
     # ========================================================================
 
+    def _extract_content_text(self, content) -> str:
+        """Extract text from message content.
+
+        Handles:
+        - str: return as-is
+        - list: extract text from content blocks or join strings
+        - dict: extract 'text' field if present
+
+        Args:
+            content: Message content (str, list, or dict)
+
+        Returns:
+            Extracted text as string
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            result = []
+            for item in content:
+                if isinstance(item, str):
+                    result.append(item)
+                elif isinstance(item, dict) and "text" in item:
+                    result.append(item["text"])
+            return "".join(result)
+        if isinstance(content, dict) and "text" in content:
+            return content["text"]
+        return ""
+
+    def _format_diff(self, text: str, filename: str = "file") -> str:
+        """Add ANSI colors to diff text or generate diff from old/new.
+
+        Handles:
+        - Existing diff format (---/+++/@@) → colorize directly
+        - Structured data with old/new fields → generate diff with difflib
+        - Plain text → detect diff markers
+
+        Args:
+            text: Content to format (diff text, or structured data)
+            filename: Filename for diff headers (default: "file")
+
+        Returns:
+            Colorized diff string
+        """
+        import difflib
+        import json
+
+        # Check if text is structured data (old/new)
+        try:
+            data = json.loads(text) if isinstance(text, str) else text
+            if isinstance(data, dict) and "old" in data and "new" in data:
+                old = data.get("old", "")
+                new = data.get("new", "")
+                fname = data.get("file", filename)
+
+                old_lines = old.splitlines(keepends=True) if old else []
+                new_lines = new.splitlines(keepends=True) if new else []
+
+                # Generate unified diff
+                diff = difflib.unified_diff(
+                    old_lines, new_lines,
+                    fromfile=f"a/{fname}",
+                    tofile=f"b/{fname}",
+                    lineterm=""
+                )
+                text = "".join(diff)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+        # Colorize diff lines
+        lines = []
+        for line in text.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                lines.append(f"\x1b[32m{line}\x1b[0m")
+            elif line.startswith("-") and not line.startswith("---"):
+                lines.append(f"\x1b[31m{line}\x1b[0m")
+            elif line.startswith(("---", "+++", "@@", "Binary")):
+                lines.append(f"\x1b[36m{line}\x1b[0m")
+            else:
+                lines.append(line)
+        return "\n".join(lines)
+
+    def _format_output(self, text: str) -> str:
+        """智能格式化"""
+        import re
+        from pygments import highlight
+        from pygments.lexers import get_lexer_by_name, guess_lexer
+        from pygments.formatters import Terminal256Formatter
+
+        # 1. Diff
+        if "---" in text and ("+++" in text or "@@" in text):
+            return self._format_diff(text)
+
+        # 2. Markdown code block 或 guess
+        code, lang = None, None
+        if m := re.search(r'```(\w*)\n(.*?)```', text, re.DOTALL):
+            lang, code = m.group(1) or "text", m.group(2)
+        elif len(text) > 30:
+            try:
+                lexer = guess_lexer(text[:200])
+                if lexer.aliases and lexer.aliases[0] not in ["text", "teratermmacro"]:
+                    lang, code = lexer.aliases[0], text
+            except:
+                pass
+
+        # 3. Highlight code
+        if code:
+            try:
+                return highlight(code, get_lexer_by_name(lang), Terminal256Formatter(style="default"))
+            except:
+                pass
+
+        # 4. Error
+        if any(kw in text for kw in ["ERROR","Error", "Exception", "Traceback", "failed", "FAILED", "FAIL", "错误"]):
+            return f"\x1b[31m{text}\x1b[0m"
+
+        return text
+
     async def stream_output(self, app, payload: dict) -> None:
         """Stream output from an application.
 
@@ -327,12 +444,15 @@ class CLIApplication:
                     if msg_type in {"ai", "AIMessageChunk", "assistant"}:
                         content = getattr(msg, "content", None)
                         if content:
-                            sys.stdout.write(content)
+                            text = self._extract_content_text(content)
+                            text = self._format_output(text)
+                            sys.stdout.write(text)
                     if msg_type in {"tool", "reasoning"}:
                         content = getattr(msg, "content", None)
                         if content:
-                            sys.stdout.write("[Tool or Think] ")
-                            sys.stdout.write(content)
+                            text = self._extract_content_text(content)
+                            text = self._format_output(text)
+                            sys.stdout.write(text)
 
                 elif isinstance(token, str):
                     sys.stdout.write(token)
@@ -475,6 +595,8 @@ class CLIApplication:
 
                 if line.startswith("/"):
                     cmd_parts = line[1:].split(None, 1)
+                    if not cmd_parts:
+                        continue  # Empty command like "/"
                     cmd = cmd_parts[0].lower()
                     args = cmd_parts[1] if len(cmd_parts) > 1 else None
 
