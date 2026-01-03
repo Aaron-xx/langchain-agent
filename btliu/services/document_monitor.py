@@ -1,16 +1,15 @@
 """Document monitoring service for automatic file change detection and processing."""
-
+import asyncio
 import fnmatch
 import logging
 import os
 import threading
-from typing import Dict, Any, Optional, List
+from pathlib import Path
+from typing import Set, Dict, Any, Optional, List
 from dataclasses import dataclass
 
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
-
-from btliu.config import paths
+from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileDeletedEvent
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,6 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MonitorConfig:
     """Configuration for document monitoring service."""
-
     enabled: bool = True
     debounce_time: float = 2.0
     batch_size: int = 10
@@ -34,7 +32,7 @@ class MonitorConfig:
 class FileChangeHandler(FileSystemEventHandler):
     """Handles file system events for document monitoring."""
 
-    def __init__(self, update_queue: "DocumentUpdateQueue", config: MonitorConfig):
+    def __init__(self, update_queue: 'DocumentUpdateQueue', config: MonitorConfig):
         super().__init__()
         self.update_queue = update_queue
         self.config = config
@@ -52,14 +50,14 @@ class FileChangeHandler(FileSystemEventHandler):
         if not event.is_directory and not self._should_ignore(event.src_path):
             if self.config.log_events:
                 logger.debug(f"File created: {event.src_path}")
-            self.update_queue.enqueue_change(event.src_path, "created")
+            self.update_queue.enqueue_change(event.src_path, 'created')
 
     def on_deleted(self, event):
         """Handle file deletion event."""
         if not event.is_directory and not self._should_ignore(event.src_path):
             if self.config.log_events:
                 logger.debug(f"File deleted: {event.src_path}")
-            self.update_queue.enqueue_change(event.src_path, "deleted")
+            self.update_queue.enqueue_change(event.src_path, 'deleted')
 
 
 class DocumentUpdateQueue:
@@ -77,10 +75,10 @@ class DocumentUpdateQueue:
     def enqueue_change(self, file_path: str, event_type: str):
         """Enqueue a file change event with debouncing."""
         with self._lock:
-            if event_type == "created":
+            if event_type == 'created':
                 self._created_files.add(file_path)
                 self._deleted_files.discard(file_path)
-            elif event_type == "deleted":
+            elif event_type == 'deleted':
                 self._deleted_files.add(file_path)
                 self._created_files.discard(file_path)
 
@@ -90,7 +88,8 @@ class DocumentUpdateQueue:
 
             # Schedule processing after debounce time
             self._timer = threading.Timer(
-                self.config.debounce_time, self._trigger_processing
+                self.config.debounce_time,
+                self._trigger_processing
             )
             self._timer.start()
 
@@ -102,12 +101,6 @@ class DocumentUpdateQueue:
     def _process_pending(self):
         """Process all pending file changes."""
         with self._lock:
-            # Check if hash index exists, if not trigger initial indexing
-            if not self.doc_manager.hash_index.exists():
-                logger.info("Hash index not found, triggering initial indexing...")
-                self.doc_manager.add_documents()
-                return
-
             if not self._created_files and not self._deleted_files:
                 return
 
@@ -161,7 +154,7 @@ class DocumentMonitorService:
         self.config = self._load_config()
 
         # Set logger level based on global configuration
-        log_level_str = context["config"].get("log_level", "WARNING").upper()
+        log_level_str = context['config'].get('log_level', 'WARNING').upper()
         log_level = getattr(logging, log_level_str, logging.WARNING)
         logger.setLevel(log_level)
 
@@ -171,18 +164,18 @@ class DocumentMonitorService:
 
     def _load_config(self) -> MonitorConfig:
         """Load configuration from context config."""
-        config_dict = self.context["config"].get("document_monitor", {})
+        config_dict = self.context['config'].get('document_monitor', {})
 
         # Convert to MonitorConfig with defaults
         return MonitorConfig(
-            enabled=config_dict.get("enabled", True),
-            debounce_time=config_dict.get("debounce_time", 2.0),
-            batch_size=config_dict.get("batch_size", 10),
-            max_retries=config_dict.get("max_retries", 3),
-            log_events=config_dict.get("log_events", True),
-            ignore_patterns=config_dict.get(
-                "ignore_patterns", ["*.tmp", "*.swp", "~*", ".DS_Store", "*.bak"]
-            ),
+            enabled=config_dict.get('enabled', True),
+            debounce_time=config_dict.get('debounce_time', 2.0),
+            batch_size=config_dict.get('batch_size', 10),
+            max_retries=config_dict.get('max_retries', 3),
+            log_events=config_dict.get('log_events', True),
+            ignore_patterns=config_dict.get('ignore_patterns', [
+                "*.tmp", "*.swp", "~*", ".DS_Store", "*.bak"
+            ])
         )
 
     def start(self):
@@ -196,15 +189,16 @@ class DocumentMonitorService:
             return
 
         try:
-            # Get documents directory from paths module
-            documents_dir = paths.get_documents_dir()
+            # Get documents directory
+            documents_dir = Path(self.context['config'].get('document_processing.data_dir'))
             if not documents_dir.exists():
                 logger.warning(f"Documents directory does not exist: {documents_dir}")
                 return
 
             # Create update queue
             self.update_queue = DocumentUpdateQueue(
-                self.context["doc_manager"], self.config
+                self.context['doc_manager'],
+                self.config
             )
 
             # Set up file system observer
@@ -212,7 +206,11 @@ class DocumentMonitorService:
             event_handler = FileChangeHandler(self.update_queue, self.config)
 
             # Watch for changes in documents directory
-            self.observer.schedule(event_handler, str(documents_dir), recursive=True)
+            self.observer.schedule(
+                event_handler,
+                str(documents_dir),
+                recursive=True
+            )
 
             # Start observer
             self.observer.start()
@@ -268,8 +266,8 @@ class DocumentMonitorService:
         return {
             "running": self._running,
             "enabled": self.config.enabled,
-            "documents_dir": str(paths.get_documents_dir()),
+            "documents_dir": self.context['config'].get('document_processing.data_dir'),
             "debounce_time": self.config.debounce_time,
             "pending_created": created_count,
-            "pending_deleted": deleted_count,
+            "pending_deleted": deleted_count
         }

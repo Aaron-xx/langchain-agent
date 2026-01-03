@@ -13,6 +13,7 @@ from langchain.agents.middleware import (
     HumanInTheLoopMiddleware,
     ModelCallLimitMiddleware,
     PIIMiddleware,
+    TodoListMiddleware,
     ToolRetryMiddleware,
 )
 from langchain.agents.middleware import (
@@ -82,6 +83,8 @@ class AgentFactory:
         for name in middleware_names:
             if name == "tool_retry":
                 middleware.append(ToolRetryMiddleware(max_retries=3))
+            elif name == "todo_list":
+                middleware.append(TodoListMiddleware())
             elif name == "model_call_limit":
                 middleware.append(ModelCallLimitMiddleware(run_limit=15))
             elif name == "pii_masking":
