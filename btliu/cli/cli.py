@@ -113,7 +113,7 @@ class CLIApplication:
         self._store: Optional[Any] = None
 
         # CLI state
-        self.mode: str = "ucagent"
+        self.mode: str = "rag"
         self.setup_done: bool = False
         # Tracks if AI started responding: used to stop spinner when first token arrives
         self.first_token_received: bool = False
@@ -283,7 +283,7 @@ class CLIApplication:
         """
         if self._doc_monitor is not None:
             try:
-                await self._doc_monitor.stop()
+                self._doc_monitor.stop()
             except Exception as e:
                 logger.warning(f"Error stopping document monitor: {e}")
 
@@ -360,10 +360,11 @@ class CLIApplication:
 
                 # Generate unified diff
                 diff = difflib.unified_diff(
-                    old_lines, new_lines,
+                    old_lines,
+                    new_lines,
                     fromfile=f"a/{fname}",
                     tofile=f"b/{fname}",
-                    lineterm=""
+                    lineterm="",
                 )
                 text = "".join(diff)
         except (json.JSONDecodeError, TypeError, ValueError):
@@ -395,7 +396,7 @@ class CLIApplication:
 
         # 2. Markdown code block 或 guess
         code, lang = None, None
-        if m := re.search(r'```(\w*)\n(.*?)```', text, re.DOTALL):
+        if m := re.search(r"```(\w*)\n(.*?)```", text, re.DOTALL):
             lang, code = m.group(1) or "text", m.group(2)
         elif len(text) > 30:
             try:
@@ -408,12 +409,26 @@ class CLIApplication:
         # 3. Highlight code
         if code:
             try:
-                return highlight(code, get_lexer_by_name(lang), Terminal256Formatter(style="default"))
+                return highlight(
+                    code, get_lexer_by_name(lang), Terminal256Formatter(style="default")
+                )
             except:
                 pass
 
         # 4. Error
-        if any(kw in text for kw in ["ERROR","Error", "Exception", "Traceback", "failed", "FAILED", "FAIL", "错误"]):
+        if any(
+            kw in text
+            for kw in [
+                "ERROR",
+                "Error",
+                "Exception",
+                "Traceback",
+                "failed",
+                "FAILED",
+                "FAIL",
+                "错误",
+            ]
+        ):
             return f"\x1b[31m{text}\x1b[0m"
 
         return text

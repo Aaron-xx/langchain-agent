@@ -9,6 +9,7 @@ This module provides a document manager that:
 - Documents directory: ~/.btliu/data/documents (global)
 """
 
+from functools import partial
 import hashlib
 import json
 import logging
@@ -17,9 +18,14 @@ from pathlib import Path
 from typing import Any, Callable
 
 from langchain_community.document_loaders import (
+    CSVLoader,
     JSONLoader,
+    PyMuPDFLoader,
     PyPDFLoader,
     TextLoader,
+    UnstructuredExcelLoader,
+    UnstructuredPowerPointLoader,
+    UnstructuredWordDocumentLoader,
 )
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
@@ -55,10 +61,26 @@ class DocumentManager:
 
     # Loader mapping for supported file types
     LOADERS: dict[str, Callable] = {
-        ".pdf": PyPDFLoader,
         ".txt": TextLoader,
-        ".md": lambda p: TextLoader(p, encoding="utf-8"),
-        ".json": lambda p: JSONLoader(p, jq_schema=".", text_content=False),
+        ".md": partial(TextLoader, encoding="utf-8"),
+        ".rst": partial(TextLoader, encoding="utf-8"),
+        # PDF格式（多个选项）
+        # ".pdf": PyPDFLoader,
+        # 如果需要更好的PDF支持，可以用：
+        ".pdf": PyMuPDFLoader,  # 更快，支持图片
+        # ".pdf": UnstructuredPDFLoader,  # 最全面
+        # 数据格式
+        ".json": partial(JSONLoader, jq_schema=".", text_content=False),
+        ".csv": CSVLoader,
+        # 办公文档
+        ".docx": UnstructuredWordDocumentLoader,
+        ".doc": UnstructuredWordDocumentLoader,
+        ".pptx": UnstructuredPowerPointLoader,
+        ".ppt": UnstructuredPowerPointLoader,
+        ".xlsx": UnstructuredExcelLoader,
+        ".xls": UnstructuredExcelLoader,
+        # Markdown（如果需要特殊处理）
+        ".markdown": partial(TextLoader, encoding="utf-8"),
     }
 
     def __init__(self, config: Any) -> None:
