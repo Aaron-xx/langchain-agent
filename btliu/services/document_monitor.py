@@ -4,24 +4,10 @@ import fnmatch
 import logging
 import os
 import re
-import time
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Any, Optional, List, Iterator
-from itertools import islice
-
-# Python 3.11 compatibility: batched was added in Python 3.12
-try:
-    from itertools import batched
-except ImportError:
-
-    def batched(iterable, n):
-        """Yield successive n-sized chunks from iterable."""
-        it = iter(iterable)
-        while batch := tuple(list(islice(it, n))):
-            yield batch
-
+from typing import Dict, Any, Optional, List, Callable
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -90,85 +76,6 @@ class EventHooks:
 
 
 # ============================================================================
-# Processing Strategy Layer - Pluggable processing logic
-# ============================================================================
-
-
-class ProcessingStrategy(ABC):
-    """Base class for document processing strategies."""
-
-    @abstractmethod
-    def process_created(self, file_paths: List[str]) -> bool:
-        """Process created files. Returns True on success."""
-        pass
-
-    @abstractmethod
-    def process_deleted(self, file_paths: List[str]) -> bool:
-        """Process deleted files. Returns True on success."""
-        pass
-
-
-class DefaultProcessingStrategy(ProcessingStrategy):
-    """Default strategy with retry mechanism."""
-
-    def __init__(self, doc_manager, config: MonitorConfig):
-        self.doc_manager = doc_manager
-        self.config = config
-
-    def process_created(self, file_paths: List[str]) -> bool:
-        """Process created files with retry logic and batching."""
-        if not file_paths:
-            return True
-
-        success = True
-        for batch in batched(file_paths, self.config.batch_size):
-            if not self._process_with_retry(
-                lambda: self.doc_manager.add_documents(list(batch)), "created"
-            ):
-                success = False
-
-        return success
-
-    def process_deleted(self, file_paths: List[str]) -> bool:
-        """Process deleted files with retry logic and batching."""
-        if not file_paths:
-            return True
-
-        # Process in batches using the configured batch_size
-        success = True
-        for batch in batched(file_paths, self.config.batch_size):
-            if not self._process_with_retry(
-                lambda: self.doc_manager.del_documents(list(batch)), "deleted"
-            ):
-                success = False
-
-        return success
-
-    def _process_with_retry(self, operation: Callable, operation_type: str) -> bool:
-        """Execute operation with exponential backoff retry."""
-        for attempt in range(self.config.max_retries):
-            try:
-                operation()
-                if attempt > 0:
-                    logger.info(
-                        f"Successfully processed {operation_type} on retry {attempt + 1}"
-                    )
-                return True
-            except Exception as e:
-                if attempt == self.config.max_retries - 1:
-                    logger.error(
-                        f"Failed to process {operation_type} after {self.config.max_retries} retries: {e}"
-                    )
-                    return False
-                wait_time = 2**attempt
-                logger.warning(
-                    f"Retry {attempt + 1}/{self.config.max_retries} for {operation_type} in {wait_time}s: {e}"
-                )
-                time.sleep(wait_time)
-        return False
-
-
-# ============================================================================
 # File System Event Handler
 # ============================================================================
 
@@ -209,25 +116,23 @@ class FileChangeHandler(FileSystemEventHandler):
 
 
 # ============================================================================
-# Document Update Queue - Debouncing, batching, and retry
+# Document Update Queue - Debouncing and retry
 # ============================================================================
 
 
 class DocumentUpdateQueue:
-    """Manages asynchronous document update processing with debouncing and batching."""
+    """Manages asynchronous document update processing with debouncing."""
 
     def __init__(
         self,
         doc_manager,
         config: MonitorConfig,
         filter: Optional[EventFilter] = None,
-        strategy: Optional[ProcessingStrategy] = None,
         hooks: Optional[EventHooks] = None,
     ):
         self.doc_manager = doc_manager
         self.config = config
         self.filter = filter or PatternEventFilter(config.ignore_patterns)
-        self.strategy = strategy or DefaultProcessingStrategy(doc_manager, config)
         self.hooks = hooks or EventHooks()
 
         self._created_files: set[str] = set()
@@ -259,7 +164,7 @@ class DocumentUpdateQueue:
         threading.Thread(target=self._process_pending, daemon=True).start()
 
     def _process_pending(self):
-        """Process all pending file changes with batching and retry."""
+        """Process all pending file changes with debouncing."""
         with self._lock:
             # Check if hash index exists
             if not self.doc_manager.hash_index.exists():
@@ -281,20 +186,15 @@ class DocumentUpdateQueue:
 
             logger.debug(f"Processing {len(created)} created, {len(deleted)} deleted")
 
-            # Strategy handles batching internally
-            success = True
-            if deleted:
-                if not self.strategy.process_deleted(deleted):
-                    success = False
+            # Handle deleted files
+            for file_path in deleted:
+                self.doc_manager.del_documents(file_path)
 
+            # Handle created files - add_documents uses smart index internally
             if created:
-                if not self.strategy.process_created(created):
-                    success = False
+                self.doc_manager.add_documents()
 
-            if success:
-                logger.debug("Successfully processed all file changes")
-            else:
-                logger.warning("Some file changes failed to process")
+            logger.debug("Successfully processed file changes")
 
             if self.hooks.on_after_process:
                 self.hooks.on_after_process()
