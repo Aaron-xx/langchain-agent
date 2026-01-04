@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # 配置 API KEY
 load_dotenv(override=True)
 
-DB_URI = "postgresql://langchain:langchain_postgres@postgres:5432/langchain"
+DB_URI = os.getenv("DATABASE_URL", "postgresql://langchain:langchain_postgres@postgres:5432/langchain")
 llm = ChatOpenAI(
     base_url="https://open.bigmodel.cn/api/coding/paas/v4",
     model="glm-4.5",
