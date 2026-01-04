@@ -1,0 +1,17 @@
+Test Results - 2026-01-03 10:48:39
+======================================================================
+Total Tests:  28
+Passed:       24
+Failed:       4
+Duration:     5.43 seconds
+======================================================================
+
+Failed Tests:
+  - Load code_samples.py
+    No documents loaded
+  - Remove surrogate pairs
+    Contains '𐍈'; Contains '𐍉'
+  - Smart index detects files
+    No changes detected, added: 0
+  - Custom k value respected
+    Got 4 results, expected <= 1

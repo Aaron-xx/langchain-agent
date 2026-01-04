@@ -116,12 +116,18 @@ class DefaultProcessingStrategy(ProcessingStrategy):
         self.config = config
 
     def process_created(self, file_paths: List[str]) -> bool:
-        """Process created files with retry logic."""
+        """Process created files with retry logic and batching."""
         if not file_paths:
             return True
-        return self._process_with_retry(
-            lambda: self.doc_manager.add_documents(), "created"
-        )
+
+        success = True
+        for batch in batched(file_paths, self.config.batch_size):
+            if not self._process_with_retry(
+                lambda: self.doc_manager.add_documents(list(batch)), "created"
+            ):
+                success = False
+
+        return success
 
     def process_deleted(self, file_paths: List[str]) -> bool:
         """Process deleted files with retry logic and batching."""

@@ -91,7 +91,7 @@ class DocumentManager:
                 - vector_store.qdrant_url: Qdrant server URL (default: :memory:)
                 - vector_store.collection_name: Collection name
                 - vector_store.similarity_threshold: Cosine threshold (default: None)
-                - vector_store.max_retrieved_docs: Max docs to return (default: 4)
+                - vector_store.default_k: Max docs to return (default: 4)
                 - document_processing.chunk_size: Text chunk size (default: 1000)
                 - document_processing.chunk_overlap: Chunk overlap (default: 200)
                 - document_processing.hash_index_file: Path to hash index file
@@ -472,7 +472,7 @@ class DocumentManager:
             retriever_type: Type of retriever ("basic" or "bm25")
                 - "basic": Vector similarity search with optional threshold filtering
                 - "bm25": BM25 keyword-based search
-            k: Number of docs to retrieve (default: max_retrieved_docs from config)
+            k: Number of docs to retrieve (default: default_k from config)
             documents: Required for BM25 retriever (loaded from data dir if None)
 
         Returns:

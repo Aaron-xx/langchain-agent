@@ -28,7 +28,7 @@ async def similarity_search(
 
     Args:
         query: Search query string (natural language question)
-        k: Number of results to return (default: use max_retrieved_docs from config)
+        k: Number of results to return (default: use default_k from config)
         tool_runtime: Tool runtime context containing doc_manager
 
     Returns:
@@ -51,7 +51,7 @@ async def similarity_search(
 
     # Use configured k if not provided
     if k is None:
-        k = doc_manager.max_retrieved_docs
+        k = doc_manager.default_k
 
     # Use similarity_search_with_relevance_scores to get scores
     # This returns (Document, relevance_score) tuples
@@ -79,7 +79,7 @@ async def bm25_search(
 
     Args:
         query: Search query string (keywords work best)
-        k: Number of results to return (default: use max_retrieved_docs from config)
+        k: Number of results to return (default: use default_k from config)
         tool_runtime: Tool runtime context containing doc_manager
 
     Returns:

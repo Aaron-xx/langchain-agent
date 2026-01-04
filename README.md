@@ -134,7 +134,7 @@ The system uses a hierarchical configuration in `config.json`:
     "persist_directory": "./data/chroma_db",
     "collection_name": "rag_documents",
     "similarity_threshold": 0.78,
-    "max_retrieved_docs": 4
+    "default_k": 4
   },
   "document_processing": {
     "data_dir": "./data/documents",
@@ -367,7 +367,7 @@ Configure external MCP servers:
   "vector_store": {
     "persist_directory": "./data/chroma_db",
     "similarity_threshold": 0.8,
-    "max_retrieved_docs": 5,
+    "default_k": 5,
     "enable_caching": true,
     "cache_ttl": 3600
   }
