@@ -42,20 +42,18 @@ PRESETS: dict[str, AgentConfig] = {
         prompt_fn=rag_prompt_with_context,
         tools=["retrieval"],
         middleware=[
-            "todo_listpii_masking",
             "summarization",
-            "human_in_loop",
             "tool_retry",
         ],
     ),
     "uc_agent": AgentConfig(
         name="uc_agent",
         prompt_fn=ucagent_prompt_with_context,
-        tools=["retrieval", "mcp", "memory"],
+        tools=["mcp"],
         middleware=[
-            "todo_listpii_masking",
+            "todo_list"
             "summarization",
-            "human_in_loop",
+            # "human_in_loop",
             "tool_retry",
         ],
     ),
