@@ -3,6 +3,12 @@
 from dataclasses import dataclass
 from typing import Any
 
+# Import all prompt functions
+from btliu.agents.dynamic_prompts import (
+    rag_prompt_with_context,
+    ucagent_prompt_with_context,
+)
+
 
 @dataclass
 class AgentConfig:
@@ -27,13 +33,6 @@ class AgentConfig:
             self.tools = []
         if self.middleware is None:
             self.middleware = []
-
-
-# Import all prompt functions
-from btliu.agents.dynamic_prompts import (
-    rag_prompt_with_context,
-    ucagent_prompt_with_context,
-)
 
 # Preset configurations - directly reference prompt functions
 PRESETS: dict[str, AgentConfig] = {

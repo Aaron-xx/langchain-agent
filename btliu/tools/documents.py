@@ -10,8 +10,6 @@ This module provides a document manager that:
 """
 
 from functools import partial
-import hashlib
-import json
 import logging
 import re
 from pathlib import Path
@@ -21,7 +19,6 @@ from langchain_community.document_loaders import (
     CSVLoader,
     JSONLoader,
     PyMuPDFLoader,
-    PyPDFLoader,
     TextLoader,
     UnstructuredExcelLoader,
     UnstructuredPowerPointLoader,
@@ -33,8 +30,6 @@ from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Distance,
-    VectorParams,
     Filter,
     FieldCondition,
     MatchValue,
@@ -273,7 +268,7 @@ class DocumentManager:
 
             logger.info(f"✓ Deleted: {file_path}", extra={"color": "success"})
             return True
-        except Exception as e:
+        except Exception:
             logger.error(f"✗ Failed to delete: {file_path}", extra={"color": "error"})
             return False
 
@@ -299,8 +294,6 @@ class DocumentManager:
         # Clear existing collection
         try:
             self._client.delete_collection(self.collection_name)
-            # Recreate empty collection
-            embedding = self.config.embedding()
         except Exception as e:
             logger.warning(f"Could not delete collection: {e}")
 
@@ -323,17 +316,23 @@ class DocumentManager:
 
         logger.info(f"→ Processing {len(file_paths)} files...", extra={"color": "info"})
         all_split_docs = []
+        failed_files = []
+
         for file_path in file_paths:
             docs = self._load_document(file_path)
             if docs:
                 all_split_docs.extend(self._split_documents(docs))
+            else:
+                failed_files.append(file_path)
 
         if all_split_docs:
             self._vector_store.add_documents(all_split_docs)
-            logger.info(
-                f"✓ Added {len(file_paths)} files ({len(all_split_docs)} chunks)",
-                extra={"color": "success"},
-            )
+
+        success_count = len(file_paths) - len(failed_files)
+        logger.info(
+            f"✓ Added {success_count}/{len(file_paths)} files ({len(all_split_docs)} chunks)",
+            extra={"color": "success"},
+        )
 
     def get_stats(self) -> dict[str, Any]:
         """Get collection statistics.

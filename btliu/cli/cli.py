@@ -287,14 +287,14 @@ class CLIApplication:
                         "teratermmacro",
                     ]:
                         lang, code = lexer.aliases[0], text
-                except:
+                except Exception:
                     pass
         if code:
             try:
                 return highlight(
                     code, get_lexer_by_name(lang), Terminal256Formatter(style="default")
                 )
-            except:
+            except Exception:
                 pass
         # Error highlighting
         if isinstance(text, str) and any(
@@ -400,6 +400,29 @@ class CLIApplication:
         print("\r" + " " * 30 + "\r", end="", file=sys.stderr, flush=True)
 
     # ---------------------------
+    # Progress Status
+    # ---------------------------
+    def _get_progress_prompt(self) -> str:
+        """Get current progress status for prompt display."""
+        if not self._doc_monitor or not self._doc_monitor.update_queue:
+            return ""
+
+        with self._doc_monitor.update_queue._lock:
+            state = self._doc_monitor.update_queue._progress_state
+            if not state["current_task"]:
+                return ""
+
+            total = state["total"]
+            processed = len(state["processed"])
+
+            if processed == 0:
+                return f" \x1b[33m[处理中 {total}]\x1b[0m"
+            elif processed < total:
+                return f" \x1b[33m[{processed}/{total}]\x1b[0m"
+            else:
+                return " \x1b[32m[完成]\x1b[0m"
+
+    # ---------------------------
     # Command handling
     # ---------------------------
     async def handle_command(self, cmd: str, args: Optional[str]) -> bool:
@@ -441,14 +464,16 @@ class CLIApplication:
             try:
                 print(f"Working directory: {paths_module.get_working_dir()}")
                 print(f"Config: {paths_module.find_config_path()}\n")
-            except:
+            except Exception:
                 pass
 
         while True:
             try:
                 with patch_stdout():
+                    # Build prompt with progress status
+                    progress_str = self._get_progress_prompt()
                     line = await self.prompt_session.prompt_async(
-                        ANSI(f"\x1b[36m[{self.mode}]\x1b[0m > ")
+                        ANSI(f"\x1b[36m[{self.mode}]\x1b[0m{progress_str} > ")
                     )
                 line = line.strip()
                 if not line:

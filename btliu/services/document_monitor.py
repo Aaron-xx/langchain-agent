@@ -138,6 +138,15 @@ class DocumentUpdateQueue:
         self._timer: Optional[threading.Timer] = None
         self._lock = threading.Lock()
 
+        # Progress tracking state
+        self._progress_state: dict[str, Any] = {
+            "enabled": False,
+            "current_task": None,
+            "processed": [],
+            "failed": [],
+            "total": 0,
+        }
+
     def enqueue_change(self, file_path: str, event_type: str):
         """Enqueue a file change event with debouncing."""
         with self._lock:
@@ -221,7 +230,7 @@ class DocumentUpdateQueue:
             return hashlib.md5(f.read()).hexdigest()[:16]
 
     def _process_pending(self):
-        """Process all pending file changes with debouncing."""
+        """Process all pending file changes with debouncing and progress tracking."""
         with self._lock:
             if not self._created_files and not self._deleted_files:
                 return
@@ -231,6 +240,26 @@ class DocumentUpdateQueue:
             self._created_files.clear()
             self._deleted_files.clear()
 
+            # Set up task state for progress tracking
+            if created or deleted:
+                self._progress_state["current_task"] = {
+                    "type": "add" if created else "del",
+                    "files": list(created) + list(deleted),
+                }
+                self._progress_state["processed"] = []
+                self._progress_state["failed"] = []
+                self._progress_state["total"] = len(created) + len(deleted)
+
+        # Auto-print processing start message (outside lock)
+        if created or deleted:
+            total = len(created) + len(deleted)
+            import sys
+
+            if created:
+                print(f"正在处理 {total} 个文件...", file=sys.stderr)
+            else:
+                print(f"正在删除 {total} 个文件...", file=sys.stderr)
+
         try:
             if self.hooks.on_before_process:
                 self.hooks.on_before_process(set(created), set(deleted))
@@ -239,13 +268,22 @@ class DocumentUpdateQueue:
 
             # Handle deleted files
             for file_path in deleted:
-                self.doc_manager.del_documents(file_path)
+                self._update_progress(file_path, "processing")
+                if self.doc_manager.del_documents(file_path):
+                    self._update_progress(file_path, "success")
+                else:
+                    self._update_progress(file_path, "failed")
             if deleted:
                 self._remove_from_hash_index(set(deleted))
 
             # Handle created files
             if created:
+                for file_path in created:
+                    self._update_progress(file_path, "processing")
                 self.doc_manager.add_documents(file_paths=set(created))
+                # Batch mark as success (add_documents handles individual failures)
+                for file_path in created:
+                    self._update_progress(file_path, "success")
                 self._add_to_hash_index(set(created))
 
             logger.debug("Successfully processed file changes")
@@ -258,6 +296,29 @@ class DocumentUpdateQueue:
             if self.hooks.on_error:
                 self.hooks.on_error(e)
 
+        finally:
+            # Always clear task state, even if exception occurred
+            should_print = False
+            processed = 0
+            total = 0
+            with self._lock:
+                if (
+                    self._progress_state["current_task"]
+                    and self._progress_state["enabled"]
+                ):
+                    should_print = True
+                    processed = len(self._progress_state["processed"])
+                    total = self._progress_state["total"]
+                self._progress_state["current_task"] = None
+
+            if should_print:
+                import sys
+
+                print(
+                    f"\r✓ 完成 {processed}/{total} 文件{' ' * 30}",
+                    file=sys.stderr,
+                )
+
     def stop(self):
         """Stop the update queue and process remaining changes."""
         with self._lock:
@@ -268,6 +329,98 @@ class DocumentUpdateQueue:
         # Process remaining changes
         if self._created_files or self._deleted_files:
             self._process_pending()
+
+    # -------------------------------------------------------------------------
+    # Progress Tracking
+    # -------------------------------------------------------------------------
+
+    def show_progress_status(self) -> None:
+        """Display current progress status - called by /embeding command."""
+        # Acquire lock only to read data, release before printing
+        with self._lock:
+            if not self._progress_state["current_task"]:
+                print("当前无文档处理任务")
+                return
+
+            task_type = self._progress_state["current_task"]["type"]
+            total = self._progress_state["total"]
+            processed = len(self._progress_state["processed"])
+            failed = len(self._progress_state["failed"])
+
+        # Print without holding lock to avoid blocking other threads
+        if task_type == "add":
+            if processed == 0 and total > 0:
+                print(f"正在处理 {total} 个文件...")
+            elif processed < total:
+                print(f"文档添加: {processed}/{total} 文件")
+            else:
+                print(f"文档添加: {processed}/{total} 文件")
+        else:
+            if processed == 0 and total > 0:
+                print(f"正在处理 {total} 个文件...")
+            elif processed < total:
+                print(f"文档删除: {processed}/{total} 文件")
+            else:
+                print(f"文档删除: {processed}/{total} 文件")
+
+        if failed:
+            print(f"失败: {failed} 个文件")
+
+        if processed >= total and total > 0:
+            success_count = processed - failed
+            print(f"✓ 完成！成功: {success_count}, 失败: {failed}")
+
+    def toggle_progress(self) -> bool:
+        """Toggle progress display on/off.
+
+        Returns:
+            New enabled state (True if enabled, False if disabled)
+        """
+        with self._lock:
+            self._progress_state["enabled"] = not self._progress_state["enabled"]
+            return self._progress_state["enabled"]
+
+    def _update_progress(self, file_path: str, status: str) -> None:
+        """Update progress state during file processing.
+
+        Args:
+            file_path: Path to the file being processed
+            status: Status type - "processing", "success", or "failed"
+        """
+        # For success/failed, just update state
+        if status in ("success", "failed"):
+            with self._lock:
+                if not self._progress_state["current_task"]:
+                    return
+                if status == "success":
+                    self._progress_state["processed"].append(file_path)
+                else:
+                    self._progress_state["failed"].append(file_path)
+            return
+
+        # For processing, read state and print without holding lock
+        should_print = False
+        processed = 0
+        total = 0
+
+        with self._lock:
+            if not self._progress_state["current_task"]:
+                return
+            if self._progress_state["enabled"] and status == "processing":
+                should_print = True
+                processed = len(self._progress_state["processed"])
+                total = self._progress_state["total"]
+
+        if should_print:
+            import sys
+            from pathlib import Path
+
+            print(
+                f"\r→ [{processed + 1}/{total}] {Path(file_path).name}",
+                end="",
+                flush=True,
+                file=sys.stderr,
+            )
 
 
 # ============================================================================
