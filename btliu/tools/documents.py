@@ -40,7 +40,7 @@ from qdrant_client.models import (
     MatchValue,
 )
 
-from btliu.config.paths import get_process_hash_index
+from btliu.config import Config
 
 # Import paths module for multi-tier data directory support
 try:
@@ -83,7 +83,7 @@ class DocumentManager:
         ".markdown": partial(TextLoader, encoding="utf-8"),
     }
 
-    def __init__(self, config: Any) -> None:
+    def __init__(self, config: Config) -> None:
         """Initialize DocumentManager with Qdrant backend.
 
         Args:
@@ -94,7 +94,6 @@ class DocumentManager:
                 - vector_store.default_k: Max docs to return (default: 4)
                 - document_processing.chunk_size: Text chunk size (default: 1000)
                 - document_processing.chunk_overlap: Chunk overlap (default: 200)
-                - document_processing.hash_index_file: Path to hash index file
                 - embedding(): Method returning embedding model
 
         Note:
@@ -104,7 +103,6 @@ class DocumentManager:
 
         # Use paths module for global documents directory
         self.data_dir = paths.get_documents_dir()
-        self.hash_index = get_process_hash_index()
 
         # Document processing configuration
         self.chunk_size = config.get("document_processing.chunk_size", 1000)
@@ -131,30 +129,12 @@ class DocumentManager:
         # Initialize embeddings
         embedding = config.embedding()
 
-        # Create or use existing collection
-        self._ensure_collection(embedding)
-
         # Initialize vector store
         self._vector_store = QdrantVectorStore(
             client=self._client,
             collection_name=self.collection_name,
             embedding=embedding,
         )
-
-    def _ensure_collection(self, embedding: Any) -> None:
-        """Create Qdrant collection if it doesn't exist.
-
-        Args:
-            embedding: Embedding model instance
-        """
-        if not self._client.collection_exists(self.collection_name):
-            # Get vector dimension from embedding model
-            vector_size = len(embedding.embed_query("sample"))
-            self._client.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
-            )
-            logger.info(f"Created collection: {self.collection_name}")
 
     @property
     def vector_store(self) -> QdrantVectorStore:
@@ -266,65 +246,6 @@ class DocumentManager:
 
         return text.strip()
 
-    def _compute_file_hash(self, file_path: str) -> str:
-        """Compute hash of file for change detection.
-
-        Args:
-            file_path: Path to the file
-
-        Returns:
-            MD5 hash (first 16 characters)
-        """
-        with open(file_path, "rb") as f:
-            return hashlib.md5(f.read()).hexdigest()[:16]
-
-    def _smart_index(self) -> tuple[bool, set[str], set[str]]:
-        """Check which documents changed using hash comparison.
-
-        Returns:
-            Tuple of (has_changed, added_files, removed_files):
-                - has_changed: True if any file changed
-                - added_files: Set of new or modified file paths
-                - removed_files: Set of deleted file paths
-        """
-        hash_file = self.hash_index
-
-        # Scan current files
-        current_files = set()
-        current_hashes = {}
-        for file_path in self.data_dir.rglob("*"):
-            if file_path.is_file() and file_path.suffix in self.LOADERS:
-                path_str = str(file_path)
-                current_files.add(path_str)
-                current_hashes[path_str] = self._compute_file_hash(path_str)
-
-        # Load old hash index
-        old_hashes = {}
-        if hash_file.exists():
-            try:
-                with open(hash_file) as f:
-                    old_hashes = json.load(f)
-            except (json.JSONDecodeError, IOError) as e:
-                logger.warning(f"Failed to read hash index: {e}")
-
-        # Calculate differences
-        added_files = current_files - set(old_hashes.keys())
-        removed_files = set(old_hashes.keys()) - current_files
-
-        # Detect modified files
-        for path, new_hash in current_hashes.items():
-            if path in old_hashes and old_hashes[path] != new_hash:
-                added_files.add(path)
-
-        has_changed = bool(added_files or removed_files)
-
-        # Always ensure hash index file exists
-        hash_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(hash_file, "w") as f:
-            json.dump(current_hashes, f, indent=2)
-
-        return has_changed, added_files, removed_files
-
     def del_documents(self, file_path: str) -> bool:
         """Delete all documents with matching source metadata.
 
@@ -349,18 +270,6 @@ class DocumentManager:
                 collection_name=self.collection_name,
                 points_selector=filter_obj,
             )
-
-            # Remove from hash index
-            if self.hash_index.exists():
-                try:
-                    with open(self.hash_index) as f:
-                        hashes = json.load(f)
-                    if file_path in hashes:
-                        del hashes[file_path]
-                        with open(self.hash_index, "w") as f:
-                            json.dump(hashes, f, indent=2)
-                except (json.JSONDecodeError, IOError) as e:
-                    logger.warning(f"Failed to update hash index: {e}")
 
             logger.info(f"✓ Deleted: {file_path}", extra={"color": "success"})
             return True
@@ -392,7 +301,6 @@ class DocumentManager:
             self._client.delete_collection(self.collection_name)
             # Recreate empty collection
             embedding = self.config.embedding()
-            self._ensure_collection(embedding)
         except Exception as e:
             logger.warning(f"Could not delete collection: {e}")
 
@@ -400,50 +308,32 @@ class DocumentManager:
         self._vector_store.add_documents(split_docs)
         logger.info(f"Reindex complete: {len(split_docs)} chunks stored")
 
-    def add_documents(self, documents: list[Document] | None = None) -> None:
-        """Add or update documents incrementally.
-
-        When documents is None, uses smart index to detect changes and only
-        processes new or modified files.
+    def add_documents(self, file_paths: set[str]) -> None:
+        """Add documents to vector store.
 
         Args:
-            documents: Optional list of documents. If None, loads from data_dir
+            file_paths: Set of file paths to process.
+
+        Note:
+            Pure business logic - no hash index management.
+            Caller is responsible for tracking what needs to be processed.
         """
-        logger.info("→ Adding documents to vector store...", extra={"color": "info"})
+        if not file_paths:
+            return
 
-        if documents is None:
-            # Use smart index to detect new/modified files
-            has_changed, added_files, _ = self._smart_index()
-            if not has_changed or not added_files:
-                logger.info(
-                    "→ No document changes detected", extra={"color": "warning"}
-                )
-                return
+        logger.info(f"→ Processing {len(file_paths)} files...", extra={"color": "info"})
+        all_split_docs = []
+        for file_path in file_paths:
+            docs = self._load_document(file_path)
+            if docs:
+                all_split_docs.extend(self._split_documents(docs))
 
-            # Process only new/modified files
-            for file_path in added_files:
-                logger.info(f"  Processing: {file_path}", extra={"color": "info"})
-                docs = self._load_document(file_path)
-                if docs:
-                    split_docs = self._split_documents(docs)
-                    self._vector_store.add_documents(split_docs)
+        if all_split_docs:
+            self._vector_store.add_documents(all_split_docs)
             logger.info(
-                f"✓ Added {len(added_files)} documents", extra={"color": "success"}
+                f"✓ Added {len(file_paths)} files ({len(all_split_docs)} chunks)",
+                extra={"color": "success"},
             )
-            return
-
-        # Original logic: process provided documents
-        if not documents:
-            logger.warning("! No documents to add", extra={"color": "warning"})
-            return
-
-        # Split and add documents
-        split_docs = self._split_documents(documents)
-        self._vector_store.add_documents(split_docs)
-
-        logger.info(
-            f"✓ Added {len(split_docs)} document chunks", extra={"color": "success"}
-        )
 
     def get_stats(self) -> dict[str, Any]:
         """Get collection statistics.
@@ -512,6 +402,6 @@ class DocumentManager:
                 documents = self._load_all_documents()
             if not documents:
                 raise ValueError("No documents available for BM25 retriever")
-            return BM25Retriever.from_documents(documents)
+            return BM25Retriever.from_documents(self._split_documents(documents))
 
         raise ValueError(f"Unsupported retriever type: {retriever_type}")

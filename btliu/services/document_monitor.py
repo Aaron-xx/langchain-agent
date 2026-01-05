@@ -28,8 +28,6 @@ class MonitorConfig:
 
     enabled: bool = True
     debounce_time: float = 2.0
-    batch_size: int = 10
-    max_retries: int = 3
     log_events: bool = True
     ignore_patterns: List[str] = field(
         default_factory=lambda: ["*.tmp", "*.swp", "~*", ".DS_Store", "*.bak"]
@@ -163,15 +161,68 @@ class DocumentUpdateQueue:
         """Trigger processing in a separate thread."""
         threading.Thread(target=self._process_pending, daemon=True).start()
 
+    # -------------------------------------------------------------------------
+    # Hash Index Management
+    # -------------------------------------------------------------------------
+
+    def _get_hash_index_path(self):
+        """Get path to hash index file."""
+        from btliu.config import paths
+
+        return paths.get_process_hash_index()
+
+    def _load_hash_index(self) -> dict:
+        """Load current hash index."""
+        import json
+
+        hash_file = self._get_hash_index_path()
+        if not hash_file.exists():
+            return {}
+        try:
+            with open(hash_file) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError) as e:
+            logger.warning(f"Failed to load hash index: {e}")
+            return {}
+
+    def _save_hash_index(self, hashes: dict) -> None:
+        """Save hash index to file."""
+        import json
+
+        hash_file = self._get_hash_index_path()
+        hash_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(hash_file, "w") as f:
+            json.dump(hashes, f, indent=2)
+
+    def _add_to_hash_index(self, file_paths: set[str]) -> None:
+        """Add files to hash index."""
+        if not file_paths:
+            return
+        hashes = self._load_hash_index()
+        for file_path in file_paths:
+            if os.path.exists(file_path):
+                hashes[file_path] = self._compute_file_hash(file_path)
+        self._save_hash_index(hashes)
+
+    def _remove_from_hash_index(self, file_paths: set[str]) -> None:
+        """Remove files from hash index."""
+        if not file_paths:
+            return
+        hashes = self._load_hash_index()
+        for file_path in file_paths:
+            hashes.pop(file_path, None)
+        self._save_hash_index(hashes)
+
+    def _compute_file_hash(self, file_path: str) -> str:
+        """Compute MD5 hash of file."""
+        import hashlib
+
+        with open(file_path, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()[:16]
+
     def _process_pending(self):
         """Process all pending file changes with debouncing."""
         with self._lock:
-            # Check if hash index exists
-            if not self.doc_manager.hash_index.exists():
-                logger.info("Hash index not found, triggering initial indexing...")
-                self.doc_manager.add_documents()
-                return
-
             if not self._created_files and not self._deleted_files:
                 return
 
@@ -189,10 +240,13 @@ class DocumentUpdateQueue:
             # Handle deleted files
             for file_path in deleted:
                 self.doc_manager.del_documents(file_path)
+            if deleted:
+                self._remove_from_hash_index(set(deleted))
 
-            # Handle created files - add_documents uses smart index internally
+            # Handle created files
             if created:
-                self.doc_manager.add_documents()
+                self.doc_manager.add_documents(file_paths=set(created))
+                self._add_to_hash_index(set(created))
 
             logger.debug("Successfully processed file changes")
 
@@ -240,8 +294,6 @@ class DocumentMonitorService:
         return MonitorConfig(
             enabled=config_dict.get("enabled", True),
             debounce_time=config_dict.get("debounce_time", 2.0),
-            batch_size=config_dict.get("batch_size", 10),
-            max_retries=config_dict.get("max_retries", 3),
             log_events=config_dict.get("log_events", True),
             ignore_patterns=config_dict.get(
                 "ignore_patterns", ["*.tmp", "*.swp", "~*", ".DS_Store", "*.bak"]
@@ -254,15 +306,15 @@ class DocumentMonitorService:
         log_level = getattr(logging, log_level_str, logging.WARNING)
         logger.setLevel(log_level)
 
-    def start(self):
-        """Start the document monitoring service."""
+    def start(self) -> bool:
+        """Start the document monitoring service. Returns True if successful."""
         if not self.config.enabled:
             logger.debug("Document monitoring is disabled")
-            return
+            return False
 
         if self._running:
             logger.debug("Document monitor is already running")
-            return
+            return True
 
         try:
             documents_dir = paths.get_documents_dir()
@@ -300,10 +352,12 @@ class DocumentMonitorService:
             self._running = True
 
             logger.debug(f"Document monitoring started for: {documents_dir}")
+            return True
 
         except Exception as e:
             logger.error(f"Failed to start document monitor: {e}", exc_info=True)
             self._cleanup()
+            return False
 
     def stop(self):
         """Stop the document monitoring service."""
@@ -351,8 +405,6 @@ class DocumentMonitorService:
             "enabled": self.config.enabled,
             "documents_dir": str(paths.get_documents_dir()),
             "debounce_time": self.config.debounce_time,
-            "batch_size": self.config.batch_size,
-            "max_retries": self.config.max_retries,
             "pending_created": created_count,
             "pending_deleted": deleted_count,
         }

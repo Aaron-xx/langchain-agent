@@ -103,7 +103,8 @@ class CLIApplication:
         if config.get("document_monitor", {}).get("enabled", False):
             try:
                 self._doc_monitor = DocumentMonitorService(context)
-                self._doc_monitor.start()
+                if not self._doc_monitor.start():
+                    logger.info("Document monitor already running, skipped")
             except Exception as e:
                 logger.error(f"Failed to start document monitor: {e}")
 
