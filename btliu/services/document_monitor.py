@@ -250,16 +250,6 @@ class DocumentUpdateQueue:
                 self._progress_state["failed"] = []
                 self._progress_state["total"] = len(created) + len(deleted)
 
-        # Auto-print processing start message (outside lock)
-        if created or deleted:
-            total = len(created) + len(deleted)
-            import sys
-
-            if created:
-                print(f"正在处理 {total} 个文件...", file=sys.stderr)
-            else:
-                print(f"正在删除 {total} 个文件...", file=sys.stderr)
-
         try:
             if self.hooks.on_before_process:
                 self.hooks.on_before_process(set(created), set(deleted))
