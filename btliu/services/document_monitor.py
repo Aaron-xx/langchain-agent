@@ -7,10 +7,10 @@ import re
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, List, Callable
+from typing import Any, Callable, Dict, List, Optional
 
-from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from watchdog.observers import Observer
 
 from btliu.config import paths
 
@@ -145,6 +145,8 @@ class DocumentUpdateQueue:
             "processed": [],
             "failed": [],
             "total": 0,
+            "current_file": None,  # 当前正在处理的文件名
+            "completed_at": None,  # 完成时间戳（用于短暂显示完成状态）
         }
 
     def enqueue_change(self, file_path: str, event_type: str):
@@ -249,6 +251,7 @@ class DocumentUpdateQueue:
                 self._progress_state["processed"] = []
                 self._progress_state["failed"] = []
                 self._progress_state["total"] = len(created) + len(deleted)
+                self._progress_state["completed_at"] = None  # 重置完成时间
 
         try:
             if self.hooks.on_before_process:
@@ -291,6 +294,8 @@ class DocumentUpdateQueue:
             should_print = False
             processed = 0
             total = 0
+            import time
+
             with self._lock:
                 if (
                     self._progress_state["current_task"]
@@ -299,7 +304,9 @@ class DocumentUpdateQueue:
                     should_print = True
                     processed = len(self._progress_state["processed"])
                     total = self._progress_state["total"]
-                self._progress_state["current_task"] = None
+                # 标记完成时间，保留 current_task 用于显示完成状态
+                if self._progress_state["current_task"]:
+                    self._progress_state["completed_at"] = time.time()
 
             if should_print:
                 import sys
@@ -370,6 +377,22 @@ class DocumentUpdateQueue:
             self._progress_state["enabled"] = not self._progress_state["enabled"]
             return self._progress_state["enabled"]
 
+    def get_progress_info(self) -> dict:
+        """获取进度信息（线程安全的封装方法）.
+
+        Returns:
+            包含进度信息的字典，如果没有活动任务则返回空字典
+        """
+        with self._lock:
+            if not self._progress_state["current_task"]:
+                return {}
+            return {
+                "total": self._progress_state["total"],
+                "processed": len(self._progress_state["processed"]),
+                "current_file": self._progress_state.get("current_file"),
+                "completed_at": self._progress_state.get("completed_at"),
+            }
+
     def _update_progress(self, file_path: str, status: str) -> None:
         """Update progress state during file processing.
 
@@ -388,7 +411,7 @@ class DocumentUpdateQueue:
                     self._progress_state["failed"].append(file_path)
             return
 
-        # For processing, read state and print without holding lock
+        # For processing, update current_file and read state for printing
         should_print = False
         processed = 0
         total = 0
@@ -396,6 +419,9 @@ class DocumentUpdateQueue:
         with self._lock:
             if not self._progress_state["current_task"]:
                 return
+            # 更新当前处理的文件
+            if status == "processing":
+                self._progress_state["current_file"] = file_path
             if self._progress_state["enabled"] and status == "processing":
                 should_print = True
                 processed = len(self._progress_state["processed"])

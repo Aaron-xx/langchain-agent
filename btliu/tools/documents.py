@@ -30,9 +30,11 @@ from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
+    Distance,
     Filter,
     FieldCondition,
     MatchValue,
+    VectorParams,
 )
 
 from btliu.config import Config
@@ -123,6 +125,7 @@ class DocumentManager:
 
         # Initialize embeddings
         embedding = config.embedding()
+        self._ensure_collection(embedding)
 
         # Initialize vector store
         self._vector_store = QdrantVectorStore(
@@ -130,6 +133,21 @@ class DocumentManager:
             collection_name=self.collection_name,
             embedding=embedding,
         )
+
+    def _ensure_collection(self, embedding: Any) -> None:
+        """Create Qdrant collection if it doesn't exist.
+
+        Args:
+            embedding: Embedding model instance
+        """
+        if not self._client.collection_exists(self.collection_name):
+            # Get vector dimension from embedding model
+            vector_size = len(embedding.embed_query("sample"))
+            self._client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(size=vector_size, distance=Distance.COSINE),
+            )
+            logger.info(f"Created collection: {self.collection_name}")
 
     @property
     def vector_store(self) -> QdrantVectorStore:

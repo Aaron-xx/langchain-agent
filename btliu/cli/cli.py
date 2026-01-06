@@ -3,18 +3,24 @@
 
 import asyncio
 import logging
-import sys
 import os
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from itertools import cycle
+from pathlib import Path
 from typing import Any, Optional
 
-from prompt_toolkit import PromptSession, print_formatted_text, ANSI
-from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit import ANSI, PromptSession
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.patch_stdout import patch_stdout
+from prompt_toolkit.styles import Style
+
+from btliu.cli.display import CLIDisplay
+from btliu.cli.status import CLIStatusManager
 
 # Try to import paths module for working directory display
 try:
@@ -23,20 +29,6 @@ except (ImportError, ValueError):
     paths_module = None
 
 logger = logging.getLogger(__name__)
-
-
-class ColorFormatter(logging.Formatter):
-    COLORS = {
-        "success": "\x1b[32m",
-        "error": "\x1b[31m",
-        "info": "\x1b[36m",
-        "warning": "\x1b[33m",
-    }
-
-    def format(self, record):
-        color = self.COLORS.get(getattr(record, "color", ""), "")
-        reset = "\x1b[0m" if color else ""
-        return f"{color}{record.getMessage()}{reset}"
 
 
 class CLIDynamicCompleter(Completer):
@@ -78,6 +70,17 @@ class CLIApplication:
             history=FileHistory(self.HISTORY_FILE), completer=self.PROMPT_COMPLETER
         )
 
+        # 状态管理和显示
+        self.display = CLIDisplay()
+        self.status = CLIStatusManager()
+
+        # 底部工具栏透明背景样式（使用深色背景覆盖默认的 reverse）
+        self._prompt_style = Style.from_dict(
+            {
+                "bottom-toolbar": "bg:#000000 noreverse",
+            }
+        )
+
     # ---------------------------
     # Initialization
     # ---------------------------
@@ -85,13 +88,20 @@ class CLIApplication:
         self._init_future = self._executor.submit(self._init_context)
 
     def _init_context(self) -> dict:
-        from btliu.config import get_config
-        from btliu.tools import DocumentManager
         from btliu.common import RuntimeContext
+        from btliu.config import get_config
         from btliu.services import DocumentMonitorService
+        from btliu.tools import DocumentManager
 
         config = get_config()
-        doc_manager = DocumentManager(config)
+
+        # 尝试初始化 DocumentManager，如果失败则设为 None
+        doc_manager = None
+        try:
+            doc_manager = DocumentManager(config)
+        except Exception as e:
+            logger.warning(f"DocumentManager initialization failed: {e}")
+            logger.info("CLI will run without document search functionality")
 
         context = RuntimeContext(
             config=config,
@@ -121,13 +131,16 @@ class CLIApplication:
             return
 
         context = self.ensure_context()
+        if context is None:
+            return
+
         config = context.get("config")
         db_uri = config.get("postgresql_uri") if config else None
         if not db_uri:
             return
 
-        from psycopg_pool import AsyncConnectionPool
         from langgraph.store.postgres.aio import AsyncPostgresStore
+        from psycopg_pool import AsyncConnectionPool
 
         self._db_pool = AsyncConnectionPool(
             conninfo=db_uri, kwargs={"autocommit": True}, open=False
@@ -138,46 +151,69 @@ class CLIApplication:
 
         try:
             await self._store.setup()
-            print_formatted_text(ANSI("\x1b[32m✓ Database initialized\x1b[0m\n"))
+            self.display.print_success("Database initialized")
         except Exception as e:
-            print_formatted_text(
-                ANSI(f"\x1b[33m! Database setup skipped: {e}\x1b[0m\n")
-            )
+            self.display.print_warning(f"Database setup skipped: {e}")
 
     async def _show_mcp_status(self):
-        print_formatted_text(ANSI("\x1b[36mChecking MCP status...\x1b[0m"))
         try:
             from btliu.tools import get_mcp_tools
 
             tools = await get_mcp_tools(verbose=False)
             if tools:
-                print_formatted_text(
-                    ANSI(f"\x1b[32m✓ MCP connected: {len(tools)} tools\x1b[0m\n")
-                )
+                self.display.print_success(f"MCP connected: {len(tools)} tools")
             else:
-                print_formatted_text(ANSI("\x1b[33m! MCP: No tools available\x1b[0m\n"))
+                self.display.print_warning("MCP: No tools available")
         except Exception as e:
-            print_formatted_text(ANSI(f"\x1b[31m✗ MCP connection failed: {e}\x1b[0m\n"))
+            self.display.print_error(f"MCP connection failed: {e}")
 
     async def _reindex_documents(self):
         context = self.ensure_context()
+        if context is None:
+            self.display.print_warning("CLI not fully initialized yet")
+            return
+
         doc_manager = context.get("doc_manager")
-        print_formatted_text(ANSI("\x1b[36mReindexing documents...\x1b[0m"))
+        if doc_manager is None:
+            self.display.print_warning("Document manager not available")
+            return
+
         try:
             doc_manager.reindex()
             stats = doc_manager.get_stats()
-            print_formatted_text(
-                ANSI(
-                    f"\x1b[32m✓ Reindexed: {stats['document_count']} documents\x1b[0m\n"
-                )
+            self.display.print_success(
+                f"Reindexed: {stats['document_count']} documents"
             )
         except Exception as e:
-            print_formatted_text(ANSI(f"\x1b[31m✗ Reindex failed: {e}\x1b[0m\n"))
+            self.display.print_error(f"Reindex failed: {e}")
 
     def _setup_status_logging(self):
-        handler = logging.StreamHandler()
-        handler.setFormatter(ColorFormatter())
-        handler.addFilter(lambda record: hasattr(record, "color"))
+        # 只更新状态，不打印到控制台（避免累积）
+        class StatusHandler(logging.Handler):
+            """日志处理器，只更新 CLI 状态，不打印。"""
+
+            def __init__(self, status_manager, color_map):
+                super().__init__()
+                self.status_manager = status_manager
+                self.color_map = color_map
+
+            def emit(self, record):
+                if hasattr(record, "color"):
+                    color = getattr(record, "color")
+                    message = self.format(record)
+                    if color in self.color_map:
+                        self.color_map[color](message)
+
+        color_map = {
+            "success": self.status.notify_success,
+            "error": self.status.notify_error,
+            "warning": self.status.notify_warning,
+            "info": self.status.notify_info,
+            "progress": self.status.notify_progress,
+        }
+
+        handler = StatusHandler(self.status, color_map)
+        handler.setFormatter(logging.Formatter("%(message)s"))
 
         tools_logger = logging.getLogger("btliu.tools")
         tools_logger.handlers.clear()
@@ -264,9 +300,10 @@ class CLIApplication:
 
     def _format_output(self, text: Any) -> str:
         import re
+
         from pygments import highlight
-        from pygments.lexers import get_lexer_by_name, guess_lexer
         from pygments.formatters import Terminal256Formatter
+        from pygments.lexers import get_lexer_by_name, guess_lexer
 
         # JSON patch handling
         if isinstance(text, list) and all("old" in t and "new" in t for t in text):
@@ -402,25 +439,75 @@ class CLIApplication:
     # ---------------------------
     # Progress Status
     # ---------------------------
-    def _get_progress_prompt(self) -> str:
-        """Get current progress status for prompt display."""
+    def _get_progress_prompt_fragments(self) -> list[tuple[str, str]]:
+        """Get current progress status for prompt display.
+
+        Returns:
+            List of (style, text) tuples for FormattedText.
+            Returns empty list if no progress info available.
+        """
         if not self._doc_monitor or not self._doc_monitor.update_queue:
-            return ""
+            return []
 
-        with self._doc_monitor.update_queue._lock:
-            state = self._doc_monitor.update_queue._progress_state
-            if not state["current_task"]:
-                return ""
+        info = self._doc_monitor.update_queue.get_progress_info()
+        if not info:
+            return []
 
-            total = state["total"]
-            processed = len(state["processed"])
+        total = info["total"]
+        processed = info["processed"]
+        current_file = info.get("current_file")
+        completed_at = info.get("completed_at")
 
-            if processed == 0:
-                return f" \x1b[33m[处理中 {total}]\x1b[0m"
-            elif processed < total:
-                return f" \x1b[33m[{processed}/{total}]\x1b[0m"
-            else:
-                return " \x1b[32m[完成]\x1b[0m"
+        # 显示完成状态（2秒内）
+        if completed_at and (time.time() - completed_at) < 2.0:
+            return [("fg:#00ff00", "[完成]")]
+
+        # 根据进度选择颜色和文本
+        if processed == 0:
+            color = "fg:#ffaa00"
+            text = f"[处理中 {total}]"
+        elif processed < total:
+            color = "fg:#ffaa00"
+            text = f"[{processed}/{total}]"
+        else:
+            color = "fg:#00ff00"
+            text = "[完成]"
+
+        fragments = [(color, text)]
+
+        # 添加当前文件名
+        if current_file:
+            filename = Path(current_file).name
+            fragments.append((color, f" {filename}"))
+
+        return fragments
+
+    def _get_bottom_toolbar(self):
+        """获取动态工具栏文本.
+
+        这个方法会在每次 prompt 渲染时被调用。
+        """
+        # 获取文档监控进度
+        progress_fragments = self._get_progress_prompt_fragments()
+
+        # 获取当前状态
+        status_text = self.status.get_toolbar_text()
+
+        # 合并显示
+        if not progress_fragments and not status_text:
+            return None
+
+        fragments = []
+        # 添加 ANSI 重置序列来禁用 reverse
+        fragments.append(("ansidefault", ""))
+        if progress_fragments:
+            fragments.extend(progress_fragments)
+        if status_text:
+            if fragments:
+                fragments.append(("", " "))
+            fragments.extend(status_text)
+
+        return FormattedText(fragments)
 
     # ---------------------------
     # Command handling
@@ -428,14 +515,15 @@ class CLIApplication:
     async def handle_command(self, cmd: str, args: Optional[str]) -> bool:
         if cmd in ("ucagent", "rag"):
             self.mode = cmd
-            print_formatted_text(ANSI(f"\x1b[33m✓ {self.mode.upper()} mode\x1b[0m\n"))
+            self.display.print_success(f"{self.mode.upper()} mode")
         elif cmd in ("save", "restore"):
             context = self.ensure_context()
+            if context is None:
+                self.display.print_warning("CLI not fully initialized yet")
+                return True
             session_name = args or f"{cmd}_session_{int(time.time())}"
             context["thread_id"] = session_name
-            print_formatted_text(
-                ANSI(f"\x1b[32m✓ Session {cmd}ed: {session_name}\x1b[0m\n")
-            )
+            self.display.print_success(f"Session {cmd}ed: {session_name}")
         elif cmd == "exit" or cmd == "quit":
             return False
         elif cmd == "reindex":
@@ -443,10 +531,17 @@ class CLIApplication:
         elif cmd == "mcp":
             await self._show_mcp_status()
         elif cmd == "help":
-            print_formatted_text(
-                ANSI(
-                    "\x1b[36mCommands: /ucagent /rag /save /restore /reindex /mcp /exit /help\x1b[0m"
-                )
+            self.display.print_commands(
+                [
+                    "/ucagent",
+                    "/rag",
+                    "/save",
+                    "/restore",
+                    "/reindex",
+                    "/mcp",
+                    "/exit",
+                    "/help",
+                ]  # noqa: E501
             )
         return True
 
@@ -456,24 +551,45 @@ class CLIApplication:
     async def run(self):
         self.start_background_init()
         self._setup_status_logging()
-        print(
-            "CLI ready  /ucagent  /rag  /save /restore /reindex /mcp /help /exit  Ctrl+C cancel\n"
+
+        # 打印启动横幅
+        self.display.print_banner("CLI ready")
+        self.display.print_commands(
+            [
+                "/ucagent",
+                "/rag",
+                "/save",
+                "/restore",
+                "/reindex",
+                "/mcp",
+                "/help",
+                "/exit",
+            ]  # noqa: E501
         )
+        self.display.print_info("Ctrl+C to cancel\n")
 
         if paths_module:
             try:
-                print(f"Working directory: {paths_module.get_working_dir()}")
-                print(f"Config: {paths_module.find_config_path()}\n")
+                self.display.print_formatted(
+                    [
+                        ("class:dim", "Working directory: "),
+                        ("class:info", f"{paths_module.get_working_dir()}\n"),
+                        ("class:dim", "Config: "),
+                        ("class:info", f"{paths_module.find_config_path()}\n"),
+                    ]
+                )
             except Exception:
                 pass
 
         while True:
             try:
                 with patch_stdout():
-                    # Build prompt with progress status
-                    progress_str = self._get_progress_prompt()
+                    # 使用动态工具栏，每 0.3 秒刷新一次
                     line = await self.prompt_session.prompt_async(
-                        ANSI(f"\x1b[36m[{self.mode}]\x1b[0m{progress_str} > ")
+                        ANSI(f"\x1b[36m[{self.mode}]\x1b[0m > "),
+                        bottom_toolbar=self._get_bottom_toolbar,
+                        style=self._prompt_style,
+                        refresh_interval=0.3,  # 300ms 刷新一次
                     )
                 line = line.strip()
                 if not line:
@@ -495,7 +611,7 @@ class CLIApplication:
             except (KeyboardInterrupt, EOFError):
                 if self.current_task and not self.current_task.done():
                     self.current_task.cancel()
-                print("\nbye")
+                self.display.print_info("\nbye")
                 break
         await self.cleanup()
 
