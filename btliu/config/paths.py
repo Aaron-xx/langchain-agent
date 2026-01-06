@@ -142,6 +142,7 @@ def get_documents_dir() -> Path:
     """
     return get_global_data_dir() / "documents"
 
+
 def get_process_hash_index() -> Path:
     """Get global documents process hash index file.
 
@@ -149,6 +150,7 @@ def get_process_hash_index() -> Path:
         Path to global documents dir (~/.btliu/data/.hash_index.json)
     """
     return get_global_data_dir() / ".hash_index.json"
+
 
 def ensure_global_config() -> Path:
     """Ensure global configuration exists, creating from template if needed.

@@ -156,16 +156,34 @@ class CLIApplication:
             self.display.print_warning(f"Database setup skipped: {e}")
 
     async def _show_mcp_status(self):
+        """显示 MCP 连接状态."""
         try:
-            from btliu.tools import get_mcp_tools
+            from btliu.tools import get_mcp_connection_status
 
-            tools = await get_mcp_tools(verbose=False)
-            if tools:
-                self.display.print_success(f"MCP connected: {len(tools)} tools")
+            servers = await get_mcp_connection_status()
+            failed_count = sum(1 for s in servers.values() if not s["connected"])
+
+            # 控制台：详细列出每个服务器状态
+            if servers:
+                for name, info in servers.items():
+                    if info["connected"]:
+                        self.display.print_success(
+                            f"{name} ✓ ({info['tools_count']} tools)"
+                        )
+                    else:
+                        self.display.print_error(f"{name} ✗")
             else:
-                self.display.print_warning("MCP: No tools available")
+                self.display.print_warning("No MCP servers configured")
+
+            # 工具栏：显示失败数量
+            if failed_count > 0:
+                self.status.notify_error(f"{failed_count} MCP connection(s) failed")
+            elif servers:
+                self.status.notify_success(f"All {len(servers)} MCP connected")
+
         except Exception as e:
-            self.display.print_error(f"MCP connection failed: {e}")
+            self.display.print_error(f"MCP check failed: {e}")
+            self.status.notify_error("MCP check failed")
 
     async def _reindex_documents(self):
         context = self.ensure_context()

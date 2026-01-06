@@ -34,6 +34,7 @@ class AgentConfig:
         if self.middleware is None:
             self.middleware = []
 
+
 # Preset configurations - directly reference prompt functions
 PRESETS: dict[str, AgentConfig] = {
     "rag_agent": AgentConfig(
@@ -50,8 +51,7 @@ PRESETS: dict[str, AgentConfig] = {
         prompt_fn=ucagent_prompt_with_context,
         tools=["mcp"],
         middleware=[
-            "todo_list"
-            "summarization",
+            "todo_listsummarization",
             # "human_in_loop",
             "tool_retry",
         ],

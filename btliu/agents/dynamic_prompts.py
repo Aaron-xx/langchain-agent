@@ -7,6 +7,7 @@ It supports context injection, history tracking, and retrieval augmentation.
 
 from langchain.agents.middleware import ModelRequest, dynamic_prompt
 
+
 def _inject_fields(prompt: str, context: dict, fields: dict[str, str]) -> str:
     """注入上下文字段到提示词.
 
@@ -24,19 +25,28 @@ def _inject_fields(prompt: str, context: dict, fields: dict[str, str]) -> str:
             prompt += f"\n\n## {label}\n{value}"
     return prompt
 
+
 @dynamic_prompt
 def rag_prompt_with_context(request: ModelRequest) -> str:
     """RAG agent prompt - 通过状态消息获取检索结果."""
-    messages = request.messages if hasattr(request, 'messages') else []
+    messages = request.messages if hasattr(request, "messages") else []
 
     # 统计所有工具调用中的知识库查询次数（包括检索和敏感查询）
     retrieval_count = 0
     for msg in messages:
-        if hasattr(msg, 'tool_calls') and msg.tool_calls:
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tool_call in msg.tool_calls:
-                name = tool_call.name if hasattr(tool_call, 'name') else tool_call.get('name')
+                name = (
+                    tool_call.name
+                    if hasattr(tool_call, "name")
+                    else tool_call.get("name")
+                )
                 # 统计知识库查询次数（包括检索和敏感查询）
-                if name == 'query_retrieval_knowledge' or name == 'tavily_search_results_json' or name == 'query_sensitive_knowledge':
+                if (
+                    name == "query_retrieval_knowledge"
+                    or name == "tavily_search_results_json"
+                    or name == "query_sensitive_knowledge"
+                ):
                     retrieval_count += 1
 
     base_prompt = """
@@ -70,7 +80,7 @@ def rag_prompt_with_context(request: ModelRequest) -> str:
 3. 文档中隐含但逻辑直接的结论（无领域外知识参与）
 
 不得进行以下推断：
-• 引入行业常识但文档未提及的结论 
+• 引入行业常识但文档未提及的结论
 • 跨文档假设作者意图
 • 基于概率或经验的猜测
 
@@ -109,16 +119,21 @@ def rag_prompt_with_context(request: ModelRequest) -> str:
 
     # 初始状态：未进行任何知识库查询
     if retrieval_count == 0:
-        return base_prompt + """
+        return (
+            base_prompt
+            + """
 
         【当前状态：初始阶段】
         ⚠️ 重要：你还没有进行任何检索！
 
         ❌ 禁止在没有检索的情况下直接回答问题。
         """
+        )
     # 信息评估阶段：已进行 1-2 次知识库查询
     elif retrieval_count < 3:
-        return base_prompt + f"""
+        return (
+            base_prompt
+            + f"""
 
         【当前状态：信息评估（已检索 {retrieval_count} 次）】
         请检查上一步工具返回的搜索结果：
@@ -129,8 +144,11 @@ def rag_prompt_with_context(request: ModelRequest) -> str:
         - 如果信息不足或有歧义 -> 请换个关键词或角度进行补充检索。
         - 如果信息已经充分 -> 请根据上下文生成最终回答。
         """
+        )
     else:
-        return base_prompt + f"""
+        return (
+            base_prompt
+            + f"""
 
         【当前状态：最终回答（已检索 {retrieval_count} 次）】
         🛑 已达到最大检索次数限制，请停止检索！
@@ -138,6 +156,7 @@ def rag_prompt_with_context(request: ModelRequest) -> str:
         请必须基于当前已有的所有信息，生成最终的回答。
         如果检索到的信息仍不能完全回答问题，请诚实地说明信息的局限性或缺失部分。
         """
+        )
 
 
 @dynamic_prompt
@@ -256,6 +275,5 @@ def ucagent_prompt_with_context(request: ModelRequest) -> str:
 必须执行的行为：
 {task_action_map.get(task_type, "• 按工具驱动方式执行任务")}
 """
-
 
     return base
