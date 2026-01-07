@@ -5,8 +5,8 @@ import asyncio
 import logging
 import os
 import sys
+import pwd
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from itertools import cycle
 from pathlib import Path
@@ -106,8 +106,6 @@ class CLIApplication:
         context = RuntimeContext(
             config=config,
             doc_manager=doc_manager,
-            store=None,
-            thread_id=str(uuid.uuid4()),
         )
 
         if config.get("document_monitor", {}).get("enabled", False):
@@ -147,7 +145,6 @@ class CLIApplication:
         )
         await self._db_pool.open()
         self._store = AsyncPostgresStore(self._db_pool)
-        context["store"] = self._store
 
         try:
             await self._store.setup()
@@ -373,7 +370,15 @@ class CLIApplication:
             Handles (token, metadata) tuples from LangGraph stream_mode="messages"
             and filters message types based on MESSAGE_TYPE_FILTER config.
         """
-        async for token in app.astream(payload):
+        current_user = pwd.getpwuid(os.getuid()).pw_name
+
+        config = {
+            "configurable": {
+                "thread_id": current_user,
+                "user_id": current_user,
+            },
+        }
+        async for token in app.astream(payload, config):
             # Signal spinner to stop: first AI token has arrived
             if not self.first_token_received:
                 self.first_token_received = True
@@ -425,6 +430,10 @@ class CLIApplication:
         self.first_token_received = False
         context = self.ensure_context()
         payload = {"messages": [{"role": "user", "content": line}]}
+
+        # 获取当前用户并设置到 context（供 memory_tools 使用）
+        current_user = pwd.getpwuid(os.getuid()).pw_name
+        context["user_id"] = current_user
 
         if self.mode == "ucagent":
             from btliu.apps.ucagent_app import UcagentApp

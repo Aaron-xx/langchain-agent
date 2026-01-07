@@ -16,13 +16,12 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 # Core components - lightweight imports
-from btliu.common import (
+from btliu.common import (  # noqa: E402
     RuntimeContext,
-    DocumentChunk,
 )
 
 # Configuration - lightweight import
-from btliu.config import Config, get_config
+from btliu.config import Config, get_config  # noqa: E402
 
 # Heavy imports removed for fast startup:
 # - btliu.tools (DocumentManager, get_all_retrievers) -> triggers Qdrant, ML libs
@@ -35,7 +34,6 @@ from btliu.config import Config, get_config
 __all__ = [
     # Core components
     "RuntimeContext",
-    "DocumentChunk",
     # Configuration
     "Config",
     "get_config",

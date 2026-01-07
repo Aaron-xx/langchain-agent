@@ -1,7 +1,6 @@
 """Common utilities and types"""
 
 from .types import (
-    DocumentChunk,
     RuntimeContext,
 )
 from .exceptions import (
@@ -12,7 +11,6 @@ from .exceptions import (
 )
 
 __all__ = [
-    "DocumentChunk",
     "RuntimeContext",
     "RAGError",
     "DocumentError",

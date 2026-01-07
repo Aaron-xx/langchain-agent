@@ -19,15 +19,21 @@ from psycopg_pool import ConnectionPool
 from langchain.tools import tool
 import subprocess
 
-#from langchain_community.storage import MongoDBStore
-from langchain.agents.middleware import HumanInTheLoopMiddleware, ModelRequest, ModelResponse, SummarizationMiddleware, wrap_model_call
+# from langchain_community.storage import MongoDBStore
+from langchain.agents.middleware import (
+    HumanInTheLoopMiddleware,
+    ModelRequest,
+    ModelResponse,
+    SummarizationMiddleware,
+    wrap_model_call,
+)
 from deepagents.middleware import FilesystemMiddleware
 from deepagents.backends import FilesystemBackend
 from langchain.agents.middleware.human_in_the_loop import (
     HITLResponse,
     ApproveDecision,
     EditDecision,
-    RejectDecision
+    RejectDecision,
 )
 from deepagents import create_deep_agent
 
@@ -35,21 +41,24 @@ logger = logging.getLogger(__name__)
 # 配置 API KEY
 load_dotenv(override=True)
 
-DB_URI = os.getenv("DATABASE_URL", "postgresql://langchain:langchain_postgres@postgres:5432/langchain")
+DB_URI = os.getenv(
+    "DATABASE_URL", "postgresql://langchain:langchain_postgres@postgres:5432/langchain"
+)
 llm = ChatOpenAI(
     base_url="https://open.bigmodel.cn/api/coding/paas/v4",
-    model="glm-4.5",
-    temperature=0
+    model="glm-4.6",
+    temperature=0,
 )
 
 small_model = ChatOpenAI(
     base_url="https://open.bigmodel.cn/api/coding/paas/v4",
-    model="glm-4",
-    temperature=0
+    model="glm-4.5",
+    temperature=0,
 )
 large_model = llm
 
-pool=None
+pool = None
+
 
 class TaskInfo(BaseModel):
     task_name: str = Field(description="任务的名字")
@@ -58,10 +67,13 @@ class TaskInfo(BaseModel):
     task_progress: int = Field(description="任务的进度")
     task_result: str = Field(description="任务的结果")
 
+
 class UserInfo(BaseModel):
     """从文本中提取的用户信息"""
+
     user_name: str = Field(description="用户的名字")
     additional_info: str = Field(description="关于用户的其他信息，例如岗位，任务等")
+
 
 class TaskState(AgentState):
     user_id: str
@@ -75,6 +87,7 @@ class SSHState(BaseModel):
     passwd: int = Field(description="远程主机的用户的密码")
     port: int = Field(description="登陆远程主机的端口")
     command: str = Field(description="需要在远程主机执行的命令")
+
 
 @tool
 def ssh_run(host: str, command: str) -> str:
@@ -90,12 +103,7 @@ def ssh_run(host: str, command: str) -> str:
     """
     try:
         ssh_cmd = ["ssh", host, command]
-        result = subprocess.run(
-            ssh_cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        result = subprocess.run(ssh_cmd, capture_output=True, text=True, check=True)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         return f"SSH命令执行失败: {e.stderr.strip()}"
@@ -157,6 +165,7 @@ def save_memory(
 
     return f"已保存记忆 [{user_name}]: {info}"
 
+
 @tool
 def recall_memory(
     query: str | None = None,
@@ -208,15 +217,18 @@ def recall_memory(
             task_info = item.value.get("task_info", "N/A")
             results.append(f"- {user_name}: {info}\n- 任务信息: {task_info}")
 
-        return f"找到用户 '{user_name}' 的 {len(results)} 条记忆和任务信息:\n" + "\n".join(results)
+        return (
+            f"找到用户 '{user_name}' 的 {len(results)} 条记忆和任务信息:\n"
+            + "\n".join(results)
+        )
 
     except Exception as e:
         return f"检索用户 '{user_name}' 的记忆和任务信息时出错: {str(e)}"
 
+
 @wrap_model_call
 def dynamic_model_router(
-    request: ModelRequest,
-    handler: Callable[[ModelRequest], ModelResponse]
+    request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]
 ) -> ModelResponse:
     """
     根据对话上下文动态切换模型
@@ -225,7 +237,7 @@ def dynamic_model_router(
     state = request.state
     print(f"--- [Middleware] 当前对话状态: {state} ---")
     messages = state.get("messages", [])
-    print(f"--- [Middleware] 当前消息数量: {len(messages)} ---")
+    # print(f"--- [Middleware] 当前消息数量: {len(messages)} ---")
 
     # 获取上下文中的用户角色
     print(f"打印运行时上下文: {request.runtime.context}")
@@ -239,8 +251,8 @@ def dynamic_model_router(
 
     # 场景 B: 如果用户输入包含特定关键词 (仅作演示，实际可用分类器)
     elif messages and "复杂分析" in messages[-1].content:
-         print("--- [Middleware] 检测到复杂任务，切换 ---")
-         request = request.override(model=large_model)
+        print("--- [Middleware] 检测到复杂任务，切换 ---")
+        request = request.override(model=large_model)
 
     else:
         print("--- [Middleware] 使用默认小模型 ---")
@@ -249,7 +261,8 @@ def dynamic_model_router(
     # 继续执行调用
     return handler(request)
 
-SYSTEM_PROMPT="""
+
+SYSTEM_PROMPT = """
 你是一个专业的助手。
 
 你的能力：
@@ -264,6 +277,7 @@ SYSTEM_PROMPT="""
 
 注意：调用工具时，必须传入 user_id 参数（从 state 中获取）。
 """
+
 
 def get_agent(tools: list, middlewares: list):
     print("--- 正在连接 PostgreSQL 数据库 ---")
@@ -297,19 +311,31 @@ def get_agent(tools: list, middlewares: list):
 def get_middleware() -> list:
     hitl_middleware = HumanInTheLoopMiddleware(
         interrupt_on={
-            "write_file": {"allowed_decisions": ["approve", "edit", "reject"], "description": "需要人工批准才能写入文件"},
-            "read_file": {"allowed_decisions": ["approve", "edit", "reject"], "description": "需要人工批准才能读取文件"},
-            "save_memory": {"allowed_decisions": ["approve", "edit", "reject"], "description": "需要人工批准才能保存记忆"},
+            "write_file": {
+                "allowed_decisions": ["approve", "edit", "reject"],
+                "description": "需要人工批准才能写入文件",
+            },
+            "read_file": {
+                "allowed_decisions": ["approve", "edit", "reject"],
+                "description": "需要人工批准才能读取文件",
+            },
+            "save_memory": {
+                "allowed_decisions": ["approve", "edit", "reject"],
+                "description": "需要人工批准才能保存记忆",
+            },
             # "recall_memory": {"allowed_decisions": ["approve", "edit", "reject"], "description": "需要人工批准才能检索记忆"},
-            "ssh_run": {"allowed_decisions": ["approve", "edit", "reject"], "description": "需要人工批准才能执行SSH命令"},
+            "ssh_run": {
+                "allowed_decisions": ["approve", "edit", "reject"],
+                "description": "需要人工批准才能执行SSH命令",
+            },
         },
     )
 
     summarization_middleware = SummarizationMiddleware(
         model=llm,
-        trigger=("tokens", 10000),          # 历史消息 token 数量超过 500 时触发压缩
-        keep=("messages", 20),                     # 保留最近 5 条消息
-        summary_prompt="请将以下对话历史进行摘要，保留关键决策点和技术细节：\n\n{messages}\n\n摘要:"   # 摘要提示词
+        trigger=("tokens", 10000),  # 历史消息 token 数量超过 500 时触发压缩
+        keep=("messages", 20),  # 保留最近 5 条消息
+        summary_prompt="请将以下对话历史进行摘要，保留关键决策点和技术细节：\n\n{messages}\n\n摘要:",  # 摘要提示词
     )
 
     filesystem_middleware = FilesystemMiddleware(
@@ -319,14 +345,15 @@ def get_middleware() -> list:
         ),
     )
 
-    middlewares=[
+    middlewares = [
         hitl_middleware,
         summarization_middleware,
         filesystem_middleware,
-        dynamic_model_router
+        dynamic_model_router,
     ]
 
     return middlewares
+
 
 async def cleanup(self) -> None:
     """Clean up all resources in the correct order.
@@ -342,22 +369,28 @@ async def cleanup(self) -> None:
         except Exception as e:
             logger.warning(f"Error closing database pool: {e}")
 
-
     logger.info("CLI application cleaned up")
+
 
 def main():
     current_user = pwd.getpwuid(os.getuid()).pw_name
     print(current_user)
-    thread_config = {"configurable": {"thread_id": current_user}}
-
-    tools = [save_memory, recall_memory, ssh_run]
-    middlewares = get_middleware()
-    agent = get_agent(tools=tools, middlewares=middlewares)
 
     userinfo = UserInfo(
         user_name=current_user,
         additional_info="我喜欢python，我是一名Python工程师",
     )
+    thread_config = {
+        "configurable": {
+            "thread_id": current_user,
+            "user_id": current_user,
+            "user_info": userinfo,
+        },
+    }
+
+    tools = [save_memory, recall_memory, ssh_run]
+    middlewares = get_middleware()
+    agent = get_agent(tools=tools, middlewares=middlewares)
 
     while True:
         try:
@@ -373,15 +406,9 @@ def main():
                 print("(输入为空，使用 Ctrl+D 退出)")
                 continue
 
-            payload = {
-                "messages": [{"role": "user", "content": line}],
-                "user_id": current_user,
-                "user_info": userinfo
-            }
+            payload = {"messages": [{"role": "user", "content": line}]}
             for chunk in agent.stream(
-                payload,
-                config=thread_config,
-                stream_mode="values"
+                payload, config=thread_config, stream_mode="values"
             ):
                 last_msg = chunk["messages"][-1]
                 if last_msg.type == "ai" and last_msg.content:
@@ -405,7 +432,7 @@ def main():
                     print(f"  - 工具: {tool_call['name']}")
                     approval = input("\n[管理员]: 是否批准执行此操作? (y/n/e[编辑]): ")
 
-                    if approval.lower() == 'y':
+                    if approval.lower() == "y":
                         print("\n[系统]: 操作已批准，继续执行...")
                         hitl_response = HITLResponse(
                             decisions=[ApproveDecision(type="approve")]
@@ -413,65 +440,82 @@ def main():
                         for event in agent.stream(
                             Command(resume=hitl_response),
                             config=thread_config,
-                            stream_mode="values"
+                            stream_mode="values",
                         ):
                             if "messages" in event:
                                 last_msg = event["messages"][-1]
                                 if last_msg.type == "ai" and last_msg.content:
-                                    print(f"🤖 Agent: {last_msg.content}", end="", flush=True)
+                                    print(
+                                        f"🤖 Agent: {last_msg.content}",
+                                        end="",
+                                        flush=True,
+                                    )
                                 elif last_msg.type == "tool":
                                     print(f"   🔧 [工具输出]: {last_msg.content}")
 
-                    elif approval.lower() == 'e':
+                    elif approval.lower() == "e":
                         print("\n[系统]: 编辑模式...")
                         print(f"当前参数: {tool_call['args']}")
-                        new_task_info = input(f" (当前: {tool_call['args'].get('task_info', '')}，留空保持不变): ").strip()
-                        updated_args = tool_call['args'].copy()
+                        new_task_info = input(
+                            f" (当前: {tool_call['args'].get('task_info', '')}，留空保持不变): "
+                        ).strip()
+                        updated_args = tool_call["args"].copy()
 
-                        updated_args['task_info'] = new_task_info
+                        updated_args["task_info"] = new_task_info
                         print(f"新参数: {tool_call['args']}")
 
                         print(f"\n[系统]: 使用更新后的参数继续执行...")
                         print(f"更新后的参数: {updated_args}")
                         hitl_response = HITLResponse(
-                            decisions=[EditDecision(
-                                type="edit",
-                                edited_action={
-                                    "name": tool_call['name'],
-                                    "args": updated_args
-                                }                                
-                            )]
+                            decisions=[
+                                EditDecision(
+                                    type="edit",
+                                    edited_action={
+                                        "name": tool_call["name"],
+                                        "args": updated_args,
+                                    },
+                                )
+                            ]
                         )
                         for event in agent.stream(
                             Command(resume=hitl_response),
                             config=thread_config,
-                            stream_mode="values"
+                            stream_mode="values",
                         ):
                             if "messages" in event:
                                 last_msg = event["messages"][-1]
                                 if last_msg.type == "ai" and last_msg.content:
-                                    print(f"🤖 Agent: {last_msg.content}", end="", flush=True)
+                                    print(
+                                        f"🤖 Agent: {last_msg.content}",
+                                        end="",
+                                        flush=True,
+                                    )
                                 elif last_msg.type == "tool":
                                     print(f"   🔧 [工具输出]: {last_msg.content}")
 
-                    elif approval.lower() == 'n':
+                    elif approval.lower() == "n":
                         print("\n[系统]: 操作被拒绝。")
-                        rejection_reason = input("拒绝原因 (可选): ").strip() or "操作被管理员拒绝"
+                        rejection_reason = (
+                            input("拒绝原因 (可选): ").strip() or "操作被管理员拒绝"
+                        )
                         hitl_response = HITLResponse(
-                            decisions=[RejectDecision(
-                                type="reject",
-                                message=rejection_reason
-                            )]
+                            decisions=[
+                                RejectDecision(type="reject", message=rejection_reason)
+                            ]
                         )
                         for event in agent.stream(
                             Command(resume=hitl_response),
                             config=thread_config,
-                            stream_mode="values"
+                            stream_mode="values",
                         ):
                             if "messages" in event:
                                 last_msg = event["messages"][-1]
                                 if last_msg.type == "ai" and last_msg.content:
-                                    print(f"🤖 Agent: {last_msg.content}", end="", flush=True)
+                                    print(
+                                        f"🤖 Agent: {last_msg.content}",
+                                        end="",
+                                        flush=True,
+                                    )
                                 elif last_msg.type == "tool":
                                     print(f"   🔧 [工具输出]: {last_msg.content}")
                     else:
@@ -484,7 +528,7 @@ def main():
                         last_msg = snapshot.values["messages"][-1]
                         if last_msg.type == "ai" and last_msg.content:
                             print(f"\n[最终回复]: {last_msg.content}")
-                print()
+            print()
         except KeyboardInterrupt:
             print("\nbye")
             break  # Exit on second Ctrl+C
@@ -493,5 +537,6 @@ def main():
             print("\nbye")
             break
 
+
 if __name__ == "__main__":
-   main()
+    main()

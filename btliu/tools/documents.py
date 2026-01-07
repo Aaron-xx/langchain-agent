@@ -124,14 +124,14 @@ class DocumentManager:
             self._client = QdrantClient(url=qdrant_url)
 
         # Initialize embeddings
-        embedding = config.embedding()
-        self._ensure_collection(embedding)
+        self._embedding = config.embedding()
+        self._ensure_collection(self._embedding)
 
         # Initialize vector store
         self._vector_store = QdrantVectorStore(
             client=self._client,
             collection_name=self.collection_name,
-            embedding=embedding,
+            embedding=self._embedding,
         )
 
     def _ensure_collection(self, embedding: Any) -> None:
@@ -313,7 +313,10 @@ class DocumentManager:
         try:
             self._client.delete_collection(self.collection_name)
         except Exception as e:
-            logger.warning(f"Could not delete collection: {e}")
+            logger.debug(f"Could not delete collection: {e}")
+
+        # Recreate collection after deletion
+        self._ensure_collection(self._embedding)
 
         # Add documents to vector store
         self._vector_store.add_documents(split_docs)

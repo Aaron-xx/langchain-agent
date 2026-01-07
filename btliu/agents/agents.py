@@ -16,8 +16,8 @@ async def create_pre_agents(
     """Create all preset agents with their factory.
 
     Args:
-        context: Runtime context containing configuration
-        store: Optional store instance (if None, extracted from context)
+        context: Runtime context containing config and doc_manager
+        store: Optional store instance for cross-thread memory
 
     Returns:
         Tuple of (agents dictionary, AgentFactory instance)

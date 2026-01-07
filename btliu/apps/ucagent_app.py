@@ -62,11 +62,6 @@ class UcagentApp:
 
         context = runtime or self.context
 
-        if config is None:
-            thread_id = context.get("thread_id")
-            if thread_id:
-                config = {"configurable": {"thread_id": thread_id}}
-
         async for chunk in self.ucagent.astream(
             query,
             context=context,

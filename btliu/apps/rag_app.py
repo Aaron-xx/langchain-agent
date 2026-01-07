@@ -72,12 +72,6 @@ class RAGApp:
 
         context = runtime or self.context
 
-        # Build config with thread_id if not provided
-        if config is None:
-            thread_id = context.get("thread_id")
-            if thread_id:
-                config = {"configurable": {"thread_id": thread_id}}
-
         # Stream from agent in messages mode
         async for chunk in self.ragagent.astream(
             query,
