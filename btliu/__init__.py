@@ -25,7 +25,7 @@ from btliu.config import Config, get_config  # noqa: E402
 
 # Heavy imports removed for fast startup:
 # - btliu.tools (DocumentManager, get_all_retrievers) -> triggers Qdrant, ML libs
-# - btliu.agents (create_pre_agents) -> may trigger heavy agent imports
+# - btliu.agents (AgentFactory) -> may trigger heavy agent imports
 # These are imported on-demand inside CLI and other modules
 
 # CLI module is imported on-demand to avoid early initialization
