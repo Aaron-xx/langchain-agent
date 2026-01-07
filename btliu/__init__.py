@@ -41,7 +41,8 @@ __all__ = [
     "DocumentManager",
     "get_all_retrievers",
     # Agents (lazy - imported on demand)
-    "create_pre_agents",
+    "AgentFactory",
+    "AgentConfig",
     # CLI (lazy - imported on demand)
     "cli_main",
 ]
@@ -70,10 +71,14 @@ def __getattr__(name: str):
         from btliu.tools import get_all_retrievers
 
         return get_all_retrievers
-    elif name == "create_pre_agents":
-        from btliu.agents import create_pre_agents
+    elif name == "AgentFactory":
+        from btliu.agents.factory import AgentFactory
 
-        return create_pre_agents
+        return AgentFactory
+    elif name == "AgentConfig":
+        from btliu.agents.config import AgentConfig
+
+        return AgentConfig
     elif name == "cli_main":
         from btliu.cli import cli_main
 

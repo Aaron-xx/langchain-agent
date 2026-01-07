@@ -1,13 +1,7 @@
-"""Agent configuration presets and data structures."""
+"""Agent configuration data structures."""
 
 from dataclasses import dataclass
 from typing import Any
-
-# Import all prompt functions
-from btliu.agents.dynamic_prompts import (
-    rag_prompt_with_context,
-    ucagent_prompt_with_context,
-)
 
 
 @dataclass
@@ -33,27 +27,3 @@ class AgentConfig:
             self.tools = []
         if self.middleware is None:
             self.middleware = []
-
-
-# Preset configurations - directly reference prompt functions
-PRESETS: dict[str, AgentConfig] = {
-    "rag_agent": AgentConfig(
-        name="rag_agent",
-        prompt_fn=rag_prompt_with_context,
-        tools=["retrieval"],
-        middleware=[
-            "summarization",
-            "tool_retry",
-        ],
-    ),
-    "uc_agent": AgentConfig(
-        name="uc_agent",
-        prompt_fn=ucagent_prompt_with_context,
-        tools=["mcp"],
-        middleware=[
-            "todo_listsummarization",
-            # "human_in_loop",
-            "tool_retry",
-        ],
-    ),
-}

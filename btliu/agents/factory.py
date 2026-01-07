@@ -1,5 +1,6 @@
 """Agent factory for creating configured agents."""
 
+import asyncio
 from typing import Any, Callable
 
 from deepagents.backends import (
@@ -21,7 +22,6 @@ from langchain.agents.middleware import (
 )
 from langgraph.store.memory import InMemoryStore
 
-from btliu.agents.config import AgentConfig, PRESETS
 from btliu.common import RuntimeContext
 
 
@@ -36,24 +36,24 @@ class AgentFactory:
     def __init__(
         self,
         llm: Any,
-        tools_dict: dict[str, list],
-        store: Any | None = None,
-        filesystem_root: str = "/tmp/agent_workspace",
+        store: Any | None,
+        filesystem_root: str,
+        tools_getter: dict[str, Callable],
     ) -> None:
         """Initialize the agent factory.
 
         Args:
             llm: Language model instance
-            tools_dict: Dictionary mapping tool names to tool instances
             store: Optional store instance (defaults to InMemoryStore)
             filesystem_root: Root directory for agent filesystem access (sandboxed)
+            tools_getter: Dictionary mapping tool names to getter functions
         """
         self.llm = llm
-        self.tools_dict = tools_dict  # {"retrieval": [...], "mcp": [...]}
         self.store = store or InMemoryStore()
         self.filesystem_root = filesystem_root
+        self.tools_getter = tools_getter
 
-    def _get_tools(self, tool_names: list[str]) -> list:
+    async def _get_tools(self, tool_names: list[str]) -> list:
         """Get tools by names.
 
         Args:
@@ -64,11 +64,15 @@ class AgentFactory:
         """
         tools = []
         for name in tool_names:
-            if name in self.tools_dict:
-                tools.extend(self.tools_dict[name])
+            if name in self.tools_getter:
+                getter = self.tools_getter[name]
+                if asyncio.iscoroutinefunction(getter):
+                    tools.extend(await getter())
+                else:
+                    tools.extend(getter())
         return tools
 
-    def _get_middleware(self, middleware_names: list[str]) -> list:
+    def _create_middleware(self, middleware_names: list[str]) -> list:
         """Get middleware by names, creating fresh instances each time.
 
         Args:
@@ -136,66 +140,34 @@ class AgentFactory:
                 )
         return middleware
 
-    def create(self, config: AgentConfig) -> Any:
-        """Create an agent from configuration.
-
-        Args:
-            config: Agent configuration
-
-        Returns:
-            Configured agent instance
-        """
-        tools = self._get_tools(config.tools)
-        middleware = self._get_middleware(config.middleware)
-
-        return create_agent(
-            model=self.llm,
-            tools=tools,
-            middleware=[config.prompt_fn] + middleware,
-            store=self.store,
-            context_schema=RuntimeContext,
-        )
-
-    def create_from_preset(self, preset_name: str) -> Any:
-        """Create agent from preset name.
-
-        Args:
-            preset_name: Name of the preset configuration
-
-        Returns:
-            Configured agent instance
-
-        Raises:
-            ValueError: If preset name is not found
-        """
-        config = PRESETS.get(preset_name)
-        if not config:
-            raise ValueError(f"Unknown preset: {preset_name}")
-        return self.create(config)
-
-    def create_custom(
+    async def create(
         self,
         name: str,
         prompt_fn: Callable,
         tool_names: list[str] | None = None,
         middleware_names: list[str] | None = None,
     ) -> Any:
-        """Create custom agent with specified parameters.
+        """Create an agent.
 
         Args:
             name: Agent name
-            prompt_fn: Dynamic prompt function
+            prompt_fn: Prompt function
             tool_names: Optional list of tool names
             middleware_names: Optional list of middleware names
 
         Returns:
             Configured agent instance
         """
-        config = AgentConfig(
-            name=name,
-            prompt_fn=prompt_fn,
-            tools=tool_names or [],
-            middleware=middleware_names or [],
+        tool_names = tool_names or []
+        middleware_names = middleware_names or []
+
+        tools = await self._get_tools(tool_names)
+        middleware = self._create_middleware(middleware_names)
+
+        return create_agent(
+            model=self.llm,
+            tools=tools,
+            middleware=[prompt_fn] + middleware,
             store=self.store,
+            context_schema=RuntimeContext,
         )
-        return self.create(config)

@@ -2,8 +2,11 @@
 
 from typing import Any, AsyncGenerator, Optional
 
-from btliu.agents import create_pre_agents
+from btliu.agents.factory import AgentFactory
+from btliu.agents.dynamic_prompts import ucagent_prompt_with_context
 from btliu.common import RuntimeContext
+from btliu.config import paths
+from btliu.tools import get_mcp_tools
 
 
 class UcagentApp:
@@ -22,23 +25,33 @@ class UcagentApp:
         """
         self.context = context
         self.store = store
-        self.agents = None
-        self.factory = None
         self.ucagent = None
 
     async def get_agent(self) -> Any:
-        """Initialize agents and factory on first use.
+        """Initialize agent on first use.
 
         Returns:
             UC agent instance
-
-        Raises:
-            ValueError: If UC agent is not found
         """
-        agents, factory = await create_pre_agents(self.context, store=self.store)
-        self.ucagent = agents.get("uc_agent")
-        if self.ucagent is None:
-            raise ValueError("UC agent not found")
+        llm = self.context.config.chat()
+
+        tools_getter = {
+            "mcp": get_mcp_tools,
+        }
+
+        factory = AgentFactory(
+            llm=llm,
+            store=self.store,
+            filesystem_root=str(paths.get_working_dir()),
+            tools_getter=tools_getter,
+        )
+
+        self.ucagent = await factory.create(
+            name="uc_agent",
+            prompt_fn=ucagent_prompt_with_context,
+            tool_names=["mcp"],
+            middleware_names=["todo_list", "summarization", "tool_retry"],
+        )
         return self.ucagent
 
     async def astream(
