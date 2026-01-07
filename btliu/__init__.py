@@ -42,7 +42,6 @@ __all__ = [
     "get_all_retrievers",
     # Agents (lazy - imported on demand)
     "AgentFactory",
-    "AgentConfig",
     # CLI (lazy - imported on demand)
     "cli_main",
 ]
@@ -75,10 +74,6 @@ def __getattr__(name: str):
         from btliu.agents.factory import AgentFactory
 
         return AgentFactory
-    elif name == "AgentConfig":
-        from btliu.agents.config import AgentConfig
-
-        return AgentConfig
     elif name == "cli_main":
         from btliu.cli import cli_main
 

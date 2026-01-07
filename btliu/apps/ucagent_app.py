@@ -57,8 +57,8 @@ class UcagentApp:
     async def astream(
         self,
         query: dict[str, Any],
-        runtime: Optional[RuntimeContext] = None,
         config: Optional[dict] = None,
+        runtime: Optional[RuntimeContext] = None,
     ) -> AsyncGenerator[Any, None]:
         """Stream UC agent query execution.
 
@@ -77,8 +77,8 @@ class UcagentApp:
 
         async for chunk in self.ucagent.astream(
             query,
-            context=context,
             config=config,
+            context=context,
             stream_mode="messages",
         ):
             yield chunk

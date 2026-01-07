@@ -65,8 +65,8 @@ class RAGApp:
     async def astream(
         self,
         query: dict[str, Any],
-        runtime: RuntimeContext | None = None,
         config: dict | None = None,
+        runtime: RuntimeContext | None = None,
     ) -> AsyncGenerator[Any, None]:
         """Stream RAG query execution through agents.
 
@@ -88,8 +88,8 @@ class RAGApp:
         # Stream from agent in messages mode
         async for chunk in self.ragagent.astream(
             query,
-            context=context,
             config=config,
+            context=context,
             stream_mode="messages",
         ):
             yield chunk

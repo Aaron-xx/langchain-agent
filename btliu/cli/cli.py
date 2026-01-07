@@ -378,7 +378,7 @@ class CLIApplication:
                 "user_id": current_user,
             },
         }
-        async for token in app.astream(payload, config):
+        async for token in app.astream(payload, config=config):
             # Signal spinner to stop: first AI token has arrived
             if not self.first_token_received:
                 self.first_token_received = True
@@ -404,18 +404,13 @@ class CLIApplication:
 
                     # ---------------------------
                     # Tool / Thinking 消息
-                    # 可以单独处理，比如日志或进度显示，不影响 AI 消息
                     # ---------------------------
                     elif msg_type in {"tool", "reasoning"}:
                         content = getattr(msg, "content", None)
                         if content:
-                            # 这里可以调用单独的处理函数，比如：
-                            # self._handle_tool_message(content)
                             text = self._extract_content_text(content)
-                            # 当前先打印到 stderr，避免干扰 AI 输出
                             text = self._format_output(text)
                             sys.stdout.write(text)
-                            # print(f"[tool] {text}", file=sys.stderr)
 
                 elif isinstance(token, str):
                     # 纯文本直接写入 stdout
