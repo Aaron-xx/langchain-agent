@@ -41,7 +41,7 @@ class RAGApp:
         Returns:
             RAG agent instance
         """
-        llm = self.context.config.chat()
+        llm = self.context["config"].chat()
 
         tools_getter = {
             "retrieval": get_all_retrievers,

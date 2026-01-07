@@ -33,7 +33,7 @@ class UcagentApp:
         Returns:
             UC agent instance
         """
-        llm = self.context.config.chat()
+        llm = self.context["config"].chat()
 
         tools_getter = {
             "mcp": get_mcp_tools,
