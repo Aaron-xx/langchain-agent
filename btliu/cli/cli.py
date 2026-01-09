@@ -20,6 +20,7 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 
 from btliu.cli.display import CLIDisplay
+from btliu.cli.key_bindings import CLIKeyBindings
 from btliu.cli.status import CLIStatusManager
 
 # Try to import paths module for working directory display
@@ -66,8 +67,13 @@ class CLIApplication:
         self.current_task: Optional[asyncio.Task] = None
 
         self.stdout_lock: asyncio.Lock = asyncio.Lock()
+
+        # 快捷键绑定管理器（用于 Esc 键和 Ctrl+C 双击检测）
+        self._key_bindings = CLIKeyBindings(self)
         self.prompt_session: PromptSession = PromptSession(
-            history=FileHistory(self.HISTORY_FILE), completer=self.PROMPT_COMPLETER
+            history=FileHistory(self.HISTORY_FILE),
+            completer=self.PROMPT_COMPLETER,
+            key_bindings=self._key_bindings.bindings,
         )
 
         # 状态管理和显示
@@ -439,8 +445,14 @@ class CLIApplication:
 
             app = RAGApp(context, store=self._store)
 
-        await self.stream_output(app, payload)
-        print("\n")
+        try:
+            await self.stream_output(app, payload)
+        except asyncio.CancelledError:
+            # 任务被取消（Ctrl+C），正常结束，不传播异常
+            pass
+        finally:
+            # 输出结束后换行，让下一个提示符在新的一行
+            self.display.print_raw("")
 
     async def show_spinner(self):
         while (
@@ -449,14 +461,12 @@ class CLIApplication:
             and not self.first_token_received
         ):
             char = next(self.SPINNER_CHARS)
-            print(
-                f"\x1b[36mGenerating {char}\x1b[0m",
-                end="\r",
-                file=sys.stderr,
-                flush=True,
-            )
+            sys.stderr.write(f"\x1b[36mGenerating {char}\x1b[0m\r")
+            sys.stderr.flush()
             await asyncio.sleep(0.1)
-        print("\r" + " " * 30 + "\r", end="", file=sys.stderr, flush=True)
+        # 清空 spinner
+        sys.stderr.write("\r" + " " * 30 + "\r")
+        sys.stderr.flush()
 
     # ---------------------------
     # Progress Status
@@ -630,11 +640,20 @@ class CLIApplication:
                 self.current_task = asyncio.create_task(self.execute_query(line))
                 await self.show_spinner()
                 await self.current_task
-            except (KeyboardInterrupt, EOFError):
+            except EOFError:
+                # Ctrl+D: 直接退出
+                self.display.print_info("bye")
+                break
+            except KeyboardInterrupt:
+                # Ctrl+C: 检查双击
+                if self._key_bindings.handle_ctrl_c():
+                    self.display.print_info("bye")
+                    break
+
+                # 单击 Ctrl+C：取消任务，在工具栏显示提示
                 if self.current_task and not self.current_task.done():
                     self.current_task.cancel()
-                self.display.print_info("\nbye")
-                break
+                self.status.notify_warning("Cancelled (Ctrl+C again to exit)")
         await self.cleanup()
 
 

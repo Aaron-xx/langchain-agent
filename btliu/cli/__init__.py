@@ -2,6 +2,7 @@
 
 from .cli import CLIApplication, cli_main
 from .display import CLI_STYLE, CLIDisplay
+from .key_bindings import CLIKeyBindings
 from .status import CLIStatusManager, StatusLevel, StatusState
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "StatusState",
     "CLIDisplay",
     "CLI_STYLE",
+    "CLIKeyBindings",
 ]
