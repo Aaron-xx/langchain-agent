@@ -1,8 +1,10 @@
+import asyncio
 import logging
 import os
 import pwd
 import sys
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Optional
 from dotenv import load_dotenv
 import time
 from langchain_openai import ChatOpenAI
@@ -10,31 +12,31 @@ from langchain_core.tools import tool
 from langchain.agents import create_agent, AgentState
 from langgraph.graph.state import Command
 from pydantic import BaseModel, Field
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
 
 # --- 核心组件：Postgres 持久化检查点 ---
-from langgraph.checkpoint.postgres import PostgresSaver
-from langgraph.store.postgres import PostgresStore
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.store.postgres.aio import AsyncPostgresStore
 from langgraph.prebuilt import ToolRuntime
-from psycopg_pool import ConnectionPool
+from psycopg_pool import AsyncConnectionPool
 from langchain.tools import tool
 import subprocess
 
 # from langchain_community.storage import MongoDBStore
 from langchain.agents.middleware import (
     HumanInTheLoopMiddleware,
+    LLMToolSelectorMiddleware,
     ModelRequest,
     ModelResponse,
     SummarizationMiddleware,
+    ToolCallLimitMiddleware,
+    ToolRetryMiddleware,
     wrap_model_call,
 )
 from deepagents.middleware import FilesystemMiddleware
 from deepagents.backends import FilesystemBackend
-from langchain.agents.middleware.human_in_the_loop import (
-    HITLResponse,
-    ApproveDecision,
-    EditDecision,
-    RejectDecision,
-)
+
 from deepagents import create_deep_agent
 
 logger = logging.getLogger(__name__)
@@ -66,6 +68,19 @@ class TaskInfo(BaseModel):
     task_status: str = Field(description="任务的状态")
     task_progress: int = Field(description="任务的进度")
     task_result: str = Field(description="任务的结果")
+
+
+async def stream_agent_events(agent, hitl_response, thread_config):
+    """流式输出 agent 事件并打印消息"""
+    async for event in agent.astream(
+        Command(resume=hitl_response), config=thread_config, stream_mode="values"
+    ):
+        if "messages" in event:
+            last_msg = event["messages"][-1]
+            if last_msg.type == "ai" and last_msg.content:
+                print(f"🤖 Agent: {last_msg.content}", end="", flush=True)
+            elif last_msg.type == "tool":
+                print(f"   🔧 [工具输出]: {last_msg.content}")
 
 
 class UserInfo(BaseModel):
@@ -107,6 +122,32 @@ def ssh_run(host: str, command: str) -> str:
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
         return f"SSH命令执行失败: {e.stderr.strip()}"
+
+
+async def mcp_tools():
+    """Get all MCP tools from configured servers.
+
+    Args:
+        verbose: If True, print connection status messages.
+
+    Returns:
+        List of available MCP tools, or empty list if connection fails.
+    """
+    try:
+        client = MultiServerMCPClient(
+            {
+                "ucagent": {
+                    "transport": "streamable_http",
+                    "url": "http://localhost:5000/mcp",
+                    "timeout": 30,
+                },
+            }
+        )
+        mcp_tools = await client.get_tools()
+        return mcp_tools
+    except Exception:
+        logger.warning("! MCP connection failed")
+        return []
 
 
 # ============ 定义记忆管理工具（使用 BaseStore）===========
@@ -227,7 +268,7 @@ def recall_memory(
 
 
 @wrap_model_call
-def dynamic_model_router(
+async def dynamic_model_router(
     request: ModelRequest, handler: Callable[[ModelRequest], ModelResponse]
 ) -> ModelResponse:
     """
@@ -235,12 +276,12 @@ def dynamic_model_router(
     """
     # 获取当前对话的状态（例如消息列表）
     state = request.state
-    print(f"--- [Middleware] 当前对话状态: {state} ---")
+    # print(f"--- [Middleware] 当前对话状态: {state} ---")
     messages = state.get("messages", [])
     # print(f"--- [Middleware] 当前消息数量: {len(messages)} ---")
 
     # 获取上下文中的用户角色
-    print(f"打印运行时上下文: {request.runtime.context}")
+    # print(f"打印运行时上下文: {request.runtime.context}")
 
     # === 逻辑判断示例 ===
     # 场景 A: 如果对话轮数超过 5 轮，切换到大模型处理复杂上下文
@@ -259,7 +300,7 @@ def dynamic_model_router(
         # 默认使用 create_agent 初始化时传入的模型（即 small_model）
 
     # 继续执行调用
-    return handler(request)
+    return await handler(request)
 
 
 SYSTEM_PROMPT = """
@@ -279,21 +320,24 @@ SYSTEM_PROMPT = """
 """
 
 
-def get_agent(tools: list, middlewares: list):
+async def get_agent(tools: list, middlewares: list):
     print("--- 正在连接 PostgreSQL 数据库 ---")
 
     # 使用 ConnectionPool 管理数据库连接
-    pool = ConnectionPool(conninfo=DB_URI, max_size=20, kwargs={"autocommit": True})
+    pool = AsyncConnectionPool(
+        conninfo=DB_URI, max_size=20, kwargs={"autocommit": True}
+    )
+    await pool.open()
 
-    checkpointer = PostgresSaver(pool)
-    store = PostgresStore(pool)
+    checkpointer = AsyncPostgresSaver(pool)
+    store = AsyncPostgresStore(pool)
 
     print("🔧 初始化 Checkpointer 表结构...")
-    checkpointer.setup()
+    await checkpointer.setup()
     print("✅ Checkpointer 表结构初始化完成")
 
     print("🔧 初始化 Store 表结构...")
-    store.setup()
+    await store.setup()
     print("✅ Store 表结构初始化完成")
 
     agent = create_agent(
@@ -305,20 +349,20 @@ def get_agent(tools: list, middlewares: list):
         checkpointer=checkpointer,
         system_prompt=SYSTEM_PROMPT,
     )
-    return agent
+    return agent, pool
 
 
 def get_middleware() -> list:
     hitl_middleware = HumanInTheLoopMiddleware(
         interrupt_on={
-            "write_file": {
-                "allowed_decisions": ["approve", "edit", "reject"],
-                "description": "需要人工批准才能写入文件",
-            },
-            "read_file": {
-                "allowed_decisions": ["approve", "edit", "reject"],
-                "description": "需要人工批准才能读取文件",
-            },
+            # "write_file": {
+            #     "allowed_decisions": ["approve", "edit", "reject"],
+            #     "description": "需要人工批准才能写入文件",
+            # },
+            # "read_file": {
+            #     "allowed_decisions": ["approve", "edit", "reject"],
+            #     "description": "需要人工批准才能读取文件",
+            # },
             "save_memory": {
                 "allowed_decisions": ["approve", "edit", "reject"],
                 "description": "需要人工批准才能保存记忆",
@@ -338,41 +382,142 @@ def get_middleware() -> list:
         summary_prompt="请将以下对话历史进行摘要，保留关键决策点和技术细节：\n\n{messages}\n\n摘要:",  # 摘要提示词
     )
 
+    retry_middleware = ToolRetryMiddleware(
+        max_retries=3,
+        on_failure="continue",
+        backoff_factor=1.5,
+        initial_delay=0.5,
+        max_delay=5.0,
+        jitter=True,
+    )
+
+    tool_selector_middleware = LLMToolSelectorMiddleware(
+        model=llm,
+        max_tools=3,  # 最多选择3个工具
+        always_include=["save_memory", "recall_memory"],  # 始终包含数学计算工具
+        system_prompt="分析用户查询，选择最相关的工具。优先选择直接相关的工具。",
+    )
+
+    tool_limiter = ToolCallLimitMiddleware(
+        tool_name=None,  # None = 限制所有工具
+        run_limit=10,  # 每次运行最多调用 3 次工具
+        exit_behavior="continue",  # 超限后阻止工具调用，但继续执行
+    )
+
     filesystem_middleware = FilesystemMiddleware(
         backend=FilesystemBackend(
-            root_dir=pwd.getpwuid(os.getuid()).pw_dir,
+            root_dir=Path.cwd(),
             virtual_mode=True,
         ),
     )
 
     middlewares = [
-        hitl_middleware,
-        summarization_middleware,
-        filesystem_middleware,
         dynamic_model_router,
+        summarization_middleware,
+        retry_middleware,
+        filesystem_middleware,
+        # tool_selector_middleware,
+        tool_limiter,
+        hitl_middleware,
     ]
 
     return middlewares
 
 
-async def cleanup(self) -> None:
+async def cleanup(pool=None):
     """Clean up all resources in the correct order.
 
     This method should be called from all exit points:
     - Normal exit (/exit command)
     - Keyboard interrupt (Ctrl+C)
     - EOF (Ctrl+D)
+
+    Args:
+        pool: The AsyncConnectionPool to close
+
+    This function never raises exceptions - all errors are logged and suppressed.
     """
     if pool is not None:
         try:
-            await pool.close()
-        except Exception as e:
-            logger.warning(f"Error closing database pool: {e}")
+            # Use timeout to avoid blocking indefinitely during shutdown
+            await pool.close(timeout=5.0)
+        except BaseException as e:
+            # Catch ALL exceptions including CancelledError, KeyboardInterrupt, etc.
+            # We never want to raise from cleanup as it could mask the original exception
+            logger.info(f"Pool close: {type(e).__name__} (suppressed during shutdown)")
 
     logger.info("CLI application cleaned up")
 
 
-def main():
+class HumanInTheLoop:
+    """最小化 HITL 处理器 - 仅处理用户交互和决策"""
+
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+
+    async def handle_interrupt(self, agent, snapshot, thread_config: dict) -> None:
+        """
+        处理一次中断
+
+        Args:
+            agent: LangGraph agent
+            snapshot: agent 状态快照
+            thread_config: 线程配置
+        """
+        if not self.enabled or not snapshot.tasks:
+            return
+
+        # 获取第一个待审批工具调用
+        last_msg = snapshot.values["messages"][-1]
+        if not (hasattr(last_msg, "tool_calls") and last_msg.tool_calls):
+            return
+
+        tool_call = last_msg.tool_calls[0]
+
+        # 获取用户决策
+        decision = self._get_decision(tool_call)
+        if not decision:
+            return
+
+        # 恢复执行
+        await agent.astream(
+            Command(resume={"decisions": [decision]}),
+            config=thread_config,
+            stream_mode="values",
+        )
+
+    def _get_decision(self, tool_call: dict) -> Optional[dict]:
+        """获取用户的批准/编辑/拒绝决策"""
+
+        print(f"\n[待审批操作] 工具: {tool_call['name']}")
+        print(f"参数: {tool_call['args']}")
+
+        while True:
+            choice = input("\n(y)批准 / (e)编辑 / (n)拒绝: ").strip().lower()
+
+            if choice == "y":
+                return {"type": "approve"}
+
+            elif choice == "e":
+                new_value = input(f"编辑 task_info (留空跳过): ").strip()
+
+                if new_value:
+                    args = tool_call["args"].copy()
+                    args["task_info"] = new_value
+                    return {
+                        "type": "edit",
+                        "edited_action": {"name": tool_call["name"], "args": args},
+                    }
+
+            elif choice == "n":
+                reason = input("拒绝原因 (可选): ").strip()
+                return {"type": "reject", "message": reason or "被拒绝"}
+
+            else:
+                print("无效输入")
+
+
+async def main():
     current_user = pwd.getpwuid(os.getuid()).pw_name
     print(current_user)
 
@@ -388,155 +533,55 @@ def main():
         },
     }
 
-    tools = [save_memory, recall_memory, ssh_run]
+    tools = [save_memory, recall_memory, ssh_run, mcp_tools]
     middlewares = get_middleware()
-    agent = get_agent(tools=tools, middlewares=middlewares)
+    agent, pool = await get_agent(tools=tools, middlewares=middlewares)
+    hitl = HumanInTheLoop(enabled=True)
 
-    while True:
-        try:
-            print("User > ", end="", flush=True)
-            line = sys.stdin.readline()
+    try:
+        while True:
+            try:
+                print("User > ", end="", flush=True)
+                line = sys.stdin.readline()
 
-            # EOF reached (stdin closed)
-            if not line:
+                # EOF reached (stdin closed)
+                if not line:
+                    break
+
+                line = line.strip()
+                if not line:
+                    continue
+
+                payload = {"messages": [{"role": "user", "content": line}]}
+                async for chunk in agent.astream(
+                    payload, config=thread_config, stream_mode="values"
+                ):
+                    last_msg = chunk["messages"][-1]
+                    if last_msg.type == "ai" and last_msg.content:
+                        print(f"🤖 Agent: {last_msg.content}", end="", flush=True)
+                    if hasattr(last_msg, "tool") and last_msg.tool_calls:
+                        print(f"🤖 Tool: {last_msg.content}", end="", flush=True)
+                    if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+                        for tool_call in last_msg.tool_calls:
+                            print(f"   🔧 [调用工具]: {tool_call['name']}")
+
+                snapshot = await agent.aget_state(config=thread_config)
+                await hitl.handle_interrupt(agent, snapshot, thread_config)
+            except asyncio.CancelledError:
+                # 任务被取消（Ctrl+C），退出循环
+                print("\nbye")
                 break
+            except KeyboardInterrupt:
+                print("\nbye")
+                break  # Exit on Ctrl+C
 
-            line = line.strip()
-            if not line:
-                print("(输入为空，使用 Ctrl+D 退出)")
-                continue
-
-            payload = {"messages": [{"role": "user", "content": line}]}
-            for chunk in agent.stream(
-                payload, config=thread_config, stream_mode="values"
-            ):
-                last_msg = chunk["messages"][-1]
-                if last_msg.type == "ai" and last_msg.content:
-                    print(f"🤖 Agent: {last_msg.content}", end="", flush=True)
-                if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
-                    for tool_call in last_msg.tool_calls:
-                        print(f"   🔧 [调用工具]: {tool_call['name']}")
-
-            snapshot = agent.get_state(config=thread_config)
-
-            if snapshot.tasks:
-                print(f"\n--- 🛑 执行已暂停 (HITL Middleware) ---")
-                print(f"下一步骤 (Next): {snapshot.next}")
-                print(f"任务数量: {len(snapshot.tasks) if snapshot.tasks else 0}")
-
-                last_message = snapshot.values["messages"][-1]
-                if hasattr(last_message, "tool_calls") and last_message.tool_calls:
-                    tool_call = last_message.tool_calls[0]
-                    print(f"\n[待审批操作]:")
-                    print(f"  - 参数: {tool_call['args']}")
-                    print(f"  - 工具: {tool_call['name']}")
-                    approval = input("\n[管理员]: 是否批准执行此操作? (y/n/e[编辑]): ")
-
-                    if approval.lower() == "y":
-                        print("\n[系统]: 操作已批准，继续执行...")
-                        hitl_response = HITLResponse(
-                            decisions=[ApproveDecision(type="approve")]
-                        )
-                        for event in agent.stream(
-                            Command(resume=hitl_response),
-                            config=thread_config,
-                            stream_mode="values",
-                        ):
-                            if "messages" in event:
-                                last_msg = event["messages"][-1]
-                                if last_msg.type == "ai" and last_msg.content:
-                                    print(
-                                        f"🤖 Agent: {last_msg.content}",
-                                        end="",
-                                        flush=True,
-                                    )
-                                elif last_msg.type == "tool":
-                                    print(f"   🔧 [工具输出]: {last_msg.content}")
-
-                    elif approval.lower() == "e":
-                        print("\n[系统]: 编辑模式...")
-                        print(f"当前参数: {tool_call['args']}")
-                        new_task_info = input(
-                            f" (当前: {tool_call['args'].get('task_info', '')}，留空保持不变): "
-                        ).strip()
-                        updated_args = tool_call["args"].copy()
-
-                        updated_args["task_info"] = new_task_info
-                        print(f"新参数: {tool_call['args']}")
-
-                        print(f"\n[系统]: 使用更新后的参数继续执行...")
-                        print(f"更新后的参数: {updated_args}")
-                        hitl_response = HITLResponse(
-                            decisions=[
-                                EditDecision(
-                                    type="edit",
-                                    edited_action={
-                                        "name": tool_call["name"],
-                                        "args": updated_args,
-                                    },
-                                )
-                            ]
-                        )
-                        for event in agent.stream(
-                            Command(resume=hitl_response),
-                            config=thread_config,
-                            stream_mode="values",
-                        ):
-                            if "messages" in event:
-                                last_msg = event["messages"][-1]
-                                if last_msg.type == "ai" and last_msg.content:
-                                    print(
-                                        f"🤖 Agent: {last_msg.content}",
-                                        end="",
-                                        flush=True,
-                                    )
-                                elif last_msg.type == "tool":
-                                    print(f"   🔧 [工具输出]: {last_msg.content}")
-
-                    elif approval.lower() == "n":
-                        print("\n[系统]: 操作被拒绝。")
-                        rejection_reason = (
-                            input("拒绝原因 (可选): ").strip() or "操作被管理员拒绝"
-                        )
-                        hitl_response = HITLResponse(
-                            decisions=[
-                                RejectDecision(type="reject", message=rejection_reason)
-                            ]
-                        )
-                        for event in agent.stream(
-                            Command(resume=hitl_response),
-                            config=thread_config,
-                            stream_mode="values",
-                        ):
-                            if "messages" in event:
-                                last_msg = event["messages"][-1]
-                                if last_msg.type == "ai" and last_msg.content:
-                                    print(
-                                        f"🤖 Agent: {last_msg.content}",
-                                        end="",
-                                        flush=True,
-                                    )
-                                elif last_msg.type == "tool":
-                                    print(f"   🔧 [工具输出]: {last_msg.content}")
-                    else:
-                        print("无效的输入")
-                        continue
-                else:
-                    print("流程已完成，没有触发中断。")
-                    # 打印最终结果
-                    if snapshot.values.get("messages"):
-                        last_msg = snapshot.values["messages"][-1]
-                        if last_msg.type == "ai" and last_msg.content:
-                            print(f"\n[最终回复]: {last_msg.content}")
-            print()
-        except KeyboardInterrupt:
-            print("\nbye")
-            break  # Exit on second Ctrl+C
-
-        except EOFError:
-            print("\nbye")
-            break
+            except EOFError:
+                print("\nbye")
+                break
+    finally:
+        # 确保在任何情况下都执行清理
+        await cleanup(pool)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
