@@ -21,6 +21,7 @@ from langchain.agents.middleware import (
     ShellToolMiddleware,
 )
 from langgraph.store.memory import InMemoryStore
+from langgraph.checkpoint.memory import InMemorySaver
 
 from btliu.common import RuntimeContext
 
@@ -36,7 +37,8 @@ class AgentFactory:
     def __init__(
         self,
         llm: Any,
-        store: Any | None,
+        store: Any,
+        checkpoint: Any,
         filesystem_root: str,
         tools_getter: dict[str, Callable],
     ) -> None:
@@ -50,6 +52,7 @@ class AgentFactory:
         """
         self.llm = llm
         self.store = store or InMemoryStore()
+        self.checkpoint = checkpoint or InMemorySaver()
         self.filesystem_root = filesystem_root
         self.tools_getter = tools_getter
 
@@ -166,8 +169,9 @@ class AgentFactory:
 
         return create_agent(
             model=self.llm,
+            store=self.store,
+            checkpointer=self.checkpoint,
             tools=tools,
             middleware=[prompt_fn] + middleware,
-            store=self.store,
             context_schema=RuntimeContext,
         )

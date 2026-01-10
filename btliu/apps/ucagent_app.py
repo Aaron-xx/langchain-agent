@@ -15,7 +15,8 @@ class UcagentApp:
     def __init__(
         self,
         context: RuntimeContext,
-        store: Any = None,
+        store: Any,
+        checkpoint: Any,
     ) -> None:
         """Initialize the UC Agent application.
 
@@ -25,6 +26,7 @@ class UcagentApp:
         """
         self.context = context
         self.store = store
+        self.checkpoint = checkpoint
         self.ucagent = None
 
     async def get_agent(self) -> Any:
@@ -42,6 +44,7 @@ class UcagentApp:
         factory = AgentFactory(
             llm=llm,
             store=self.store,
+            checkpoint=self.checkpoint,
             filesystem_root=str(paths.get_working_dir()),
             tools_getter=tools_getter,
         )

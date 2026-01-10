@@ -60,7 +60,8 @@ class CLIApplication:
         self._init_future: Optional[Any] = None
         self._doc_monitor: Optional[Any] = None
         self._db_pool: Optional[Any] = None
-        self._store: Optional[Any] = None
+        self.store: Optional[Any] = None
+        self.checkpointer: Optional[Any] = None
 
         self.mode: str = "rag"
         self.first_token_received: bool = False
@@ -143,6 +144,7 @@ class CLIApplication:
         if not db_uri:
             return
 
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
         from langgraph.store.postgres.aio import AsyncPostgresStore
         from psycopg_pool import AsyncConnectionPool
 
@@ -150,10 +152,12 @@ class CLIApplication:
             conninfo=db_uri, kwargs={"autocommit": True}, open=False
         )
         await self._db_pool.open()
-        self._store = AsyncPostgresStore(self._db_pool)
+        self.store = AsyncPostgresStore(self._db_pool)
+        self.checkpointer = AsyncPostgresSaver(self._db_pool)
 
         try:
-            await self._store.setup()
+            await self.store.setup()
+            await self.checkpointer.setup()
             self.display.print_success("Database initialized")
         except Exception as e:
             self.display.print_warning(f"Database setup skipped: {e}")
@@ -439,11 +443,11 @@ class CLIApplication:
         if self.mode == "ucagent":
             from btliu.apps.ucagent_app import UcagentApp
 
-            app = UcagentApp(context, store=self._store)
+            app = UcagentApp(context, store=self.store, checkpoint=self.checkpointer)
         else:
             from btliu.apps.rag_app import RAGApp
 
-            app = RAGApp(context, store=self._store)
+            app = RAGApp(context, store=self.store, checkpoint=self.checkpointer)
 
         try:
             await self.stream_output(app, payload)
